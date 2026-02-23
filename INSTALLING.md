@@ -41,7 +41,7 @@ python --version
 python3 --version
 ```
 
-If you don't have Python 3.7+, download from [python.org](https://www.python.org/downloads/)
+If you don't have Python 3.8+, download from [python.org](https://www.python.org/downloads/)
 
 ## Standard Installation
 

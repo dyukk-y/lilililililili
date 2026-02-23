@@ -302,4 +302,4 @@ Free to use and modify.
 ---
 
 **Default Timezone:** Asia/Novosibirsk (UTC+7)  
-**Main Language:** Python 3.7+
+**Main Language:** Python 3.8+
