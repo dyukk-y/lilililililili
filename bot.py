@@ -12,6 +12,7 @@ import logging
 import json
 import os
 import re
+import html
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass, asdict
@@ -21,8 +22,6 @@ from uuid import uuid4
 import pytz
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.dispatcher.handler import CancelHandler
 from aiogram.types import ParseMode, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 from aiogram.dispatcher import FSMContext
@@ -31,32 +30,66 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher.filters import Text
 from dotenv import load_dotenv
 
-# Загрузка переменных окружения
+# Загрузка переменных окружения (только для токена)
 load_dotenv()
 
 # ==================== КОНФИГУРАЦИЯ ====================
 
 class Config:
     """Конфигурация бота"""
+    
+    # Токен бота из .env файла
     BOT_TOKEN = os.getenv("BOT_TOKEN")
-    # По умолчанию используем значения, которые вы указали
-    CHANNEL_ID = os.getenv("CHANNEL_ID", "-1002120185316")  # ID канала (например: @channel или -1001234567890)
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "1174432700"))
+    
+    # ID канала для публикации (УКАЗАТЬ СВОЙ!)
+    # Для публичного канала: @channel_username
+    # Для приватного канала: -1001234567890 (число с минусом)
+    CHANNEL_ID = "@maslyanino"  # ⚠️ ИЗМЕНИТЕ НА СВОЙ КАНАЛ!
+    
+    # ID администратора (УКАЗАТЬ СВОЙ!)
+    # Кому будут приходить уведомления об ошибках
+    # Можно узнать у @userinfobot
+    ADMIN_ID = 1174432700  # ⚠️ ИЗМЕНИТЕ НА СВОЙ ID!
+    
+    # Часовой пояс
     NSK_TIMEZONE = pytz.timezone('Asia/Novosibirsk')
+    
+    # Файл для хранения постов
     DATA_FILE = "scheduled_posts.json"
+    
+    # Настройки логирования
     LOG_LEVEL = logging.INFO
-    MIN_DELETE_DAYS = 1  # Минимальное время до удаления (дни)
-    MAX_DELETE_DAYS = 30  # Максимальное время до удаления (дни)
+    
+    # Настройки удаления
+    MIN_DELETE_DAYS = 1
+    MAX_DELETE_DAYS = 30
     
     @classmethod
     def validate(cls):
         """Проверка конфигурации"""
+        errors = []
+        
         if not cls.BOT_TOKEN:
-            raise ValueError("❌ BOT_TOKEN не установлен!")
+            errors.append("❌ BOT_TOKEN не установлен в .env файле!")
+        
         if not cls.CHANNEL_ID:
-            raise ValueError("❌ CHANNEL_ID не установлен!")
-        if not getattr(cls, 'ADMIN_ID', None):
-            raise ValueError("❌ ADMIN_ID не установлен!")
+            errors.append("❌ CHANNEL_ID не указан в коде!")
+        elif cls.CHANNEL_ID == "@your_channel_username":
+            errors.append("❌ CHANNEL_ID не изменен! Укажите свой канал в коде.")
+        
+        if not cls.ADMIN_ID:
+            errors.append("❌ ADMIN_ID не указан в коде!")
+        elif cls.ADMIN_ID == 123456789:
+            errors.append("❌ ADMIN_ID не изменен! Укажите свой ID в коде.")
+        
+        if errors:
+            error_text = "\n".join(errors)
+            raise ValueError(f"Ошибки конфигурации:\n{error_text}")
+        
+        # Логируем информацию о конфигурации
+        logging.info(f"✅ Бот токен: {cls.BOT_TOKEN[:10]}...")
+        logging.info(f"📢 Канал: {cls.CHANNEL_ID}")
+        logging.info(f"👤 Администратор: {cls.ADMIN_ID}")
 
 # ==================== МОДЕЛИ ДАННЫХ ====================
 
@@ -66,14 +99,6 @@ class PostStatus(Enum):
     PUBLISHED = "✅ Опубликован"
     DELETED = "🗑 Удален"
     FAILED = "❌ Ошибка"
-
-class TimeFormat(Enum):
-    """Форматы времени"""
-    RELATIVE_HOURS = "часы"
-    RELATIVE_DAYS = "дни"
-    ABSOLUTE_TODAY = "сегодня"
-    ABSOLUTE_TOMORROW = "завтра"
-    ABSOLUTE_DATE = "дата"
 
 @dataclass
 class ScheduledPost:
@@ -86,7 +111,7 @@ class ScheduledPost:
     message_id: Optional[int] = None
     status: str = PostStatus.SCHEDULED.value
     created_at: str = None
-    created_by: int = None  # ID пользователя создателя
+    created_by: int = None
     
     def __post_init__(self):
         if not self.created_at:
@@ -181,6 +206,14 @@ class PostStorage:
             if p.status == PostStatus.SCHEDULED.value and p.publish_time_dt > now
         ]
     
+    def get_all(self) -> List[ScheduledPost]:
+        """Получение всех постов"""
+        return list(self.posts.values())
+    
+    def get_by_user(self, user_id: int) -> List[ScheduledPost]:
+        """Получение постов конкретного пользователя"""
+        return [p for p in self.posts.values() if p.created_by == user_id]
+    
     def get_history(self, limit: int = 10) -> List[ScheduledPost]:
         """Получение истории постов"""
         return sorted(
@@ -196,6 +229,10 @@ class PostStorage:
             self.save()
 
 # ==================== УТИЛИТЫ ====================
+
+def escape_html(text: str) -> str:
+    """Экранирование HTML специальных символов"""
+    return html.escape(text)
 
 def format_timedelta(delta: timedelta) -> str:
     """Форматирование временного интервала"""
@@ -301,7 +338,7 @@ def parse_time(input_str: str) -> Tuple[Optional[datetime], Optional[str]]:
             
             elif type_ == 'hours':
                 hours = int(match.group(1))
-                if hours > 168:  # максимум неделя
+                if hours > 168:
                     return None, "❌ Максимум 168 часов (7 дней)"
                 return now_nsk + timedelta(hours=hours), None
             
@@ -313,7 +350,7 @@ def parse_time(input_str: str) -> Tuple[Optional[datetime], Optional[str]]:
             
             elif type_ == 'minutes':
                 minutes = int(match.group(1))
-                if minutes > 1440:  # максимум сутки
+                if minutes > 1440:
                     return None, "❌ Максимум 1440 минут (24 часа)"
                 return now_nsk + timedelta(minutes=minutes), None
                 
@@ -323,28 +360,30 @@ def parse_time(input_str: str) -> Tuple[Optional[datetime], Optional[str]]:
     return None, "❌ Неверный формат времени.\nИспользуйте:\n• 14:30 (сегодня/завтра)\n• завтра 14:30\n• 15.01.2024 14:30\n• 2ч, 5д, 30м"
 
 def format_post_info(post: ScheduledPost, detailed: bool = False) -> str:
-    """Форматирование информации о посте"""
+    """Форматирование информации о посте (без HTML разметки)"""
     publish_time = post.publish_time_dt
     time_str = publish_time.strftime("%d.%m.%Y %H:%M")
     
     if detailed:
         info = [
-            f"🆔 **ID:** `{post.id}`",
-            f"📅 **Публикация:** {time_str} NSK",
-            f"⏳ **До публикации:** {post.time_until_publish()}",
+            f"🆔 ID: {post.id}",
+            f"📅 Публикация: {time_str} NSK",
+            f"⏳ До публикации: {post.time_until_publish()}",
         ]
         
         if post.delete_after_days:
             delete_time = post.delete_time.strftime("%d.%m.%Y %H:%M")
-            info.append(f"🗑 **Удаление:** через {post.delete_after_days} дн. ({delete_time} NSK)")
+            info.append(f"🗑 Удаление: через {post.delete_after_days} дн. ({delete_time} NSK)")
         else:
-            info.append(f"🗑 **Удаление:** не требуется")
+            info.append(f"🗑 Удаление: не требуется")
         
-        info.append(f"📝 **Текст:**\n{post.content[:200]}{'...' if len(post.content) > 200 else ''}")
-        info.append(f"📊 **Статус:** {post.status}")
+        # Экранируем содержимое поста
+        escaped_content = escape_html(post.content[:200])
+        info.append(f"📝 Текст:\n{escaped_content}{'...' if len(post.content) > 200 else ''}")
+        info.append(f"📊 Статус: {post.status}")
     else:
         info = [
-            f"🆔 `{post.id[:8]}...`",
+            f"🆔 {post.id[:8]}...",
             f"📅 {time_str}",
             f"⏳ {post.time_until_publish()}",
         ]
@@ -354,6 +393,14 @@ def format_post_info(post: ScheduledPost, detailed: bool = False) -> str:
     
     return "\n".join(info)
 
+async def notify_admin(message: str):
+    """Отправка уведомления администратору"""
+    if Config.ADMIN_ID:
+        try:
+            await bot.send_message(Config.ADMIN_ID, message)
+        except Exception as e:
+            logging.error(f"❌ Не удалось отправить уведомление админу: {e}")
+
 # ==================== СОСТОЯНИЯ FSM ====================
 
 class PostStates(StatesGroup):
@@ -362,10 +409,6 @@ class PostStates(StatesGroup):
     waiting_for_publish_time = State()
     waiting_for_delete_days = State()
     confirming = State()
-
-class DeleteStates(StatesGroup):
-    """Состояния удаления"""
-    waiting_for_post_id = State()
 
 # ==================== КЛАВИАТУРЫ ====================
 
@@ -380,19 +423,23 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton("❓ Помощь", callback_data="help"),
         InlineKeyboardButton("🗑 Удалить пост", callback_data="delete_post")
     )
+    
+    # Добавляем кнопку статистики только для админа
+    if Config.ADMIN_ID:
+        keyboard.add(InlineKeyboardButton("📊 Статистика", callback_data="stats"))
+    
     return keyboard
 
 def get_time_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для выбора времени"""
     keyboard = InlineKeyboardMarkup(row_width=2)
-    now = datetime.now(Config.NSK_TIMEZONE)
     
     # Быстрые варианты времени
     times = [
         ("⏰ Через 1ч", "1ч"),
         ("⏰ Через 2ч", "2ч"),
         ("⏰ Через 3ч", "3ч"),
-        ("📅 Сегодня 18:00", f"сегодня 18:00"),
+        ("📅 Сегодня 18:00", "сегодня 18:00"),
         ("📅 Завтра 10:00", "завтра 10:00"),
         ("📅 Завтра 12:00", "завтра 12:00"),
     ]
@@ -433,47 +480,10 @@ def get_confirmation_keyboard() -> InlineKeyboardMarkup:
 Config.validate()
 
 # Инициализация бота
-bot = Bot(token=Config.BOT_TOKEN, parse_mode=ParseMode.MARKDOWN_V2)
+bot = Bot(token=Config.BOT_TOKEN, parse_mode=ParseMode.HTML)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 dp.middleware.setup(LoggingMiddleware())
-
-
-class AdminOnlyMiddleware(BaseMiddleware):
-    """Middleware, разрешающее взаимодействие только администратору (по ID)."""
-
-    async def on_pre_process_update(self, update, data):
-        # Извлекаем ID пользователя из разных типов обновлений
-        user_id = None
-
-        if hasattr(update, 'message') and update.message:
-            user = update.message.from_user
-        elif hasattr(update, 'callback_query') and update.callback_query:
-            user = update.callback_query.from_user
-        else:
-            user = None
-
-        if user:
-            user_id = getattr(user, 'id', None)
-
-        # Разрешаем, если это канал (chat) или админ
-        if user_id is None:
-            return
-
-        if int(user_id) != int(Config.ADMIN_ID):
-            # Отменяем обработку и, при наличии, отправляем уведомление
-            try:
-                if hasattr(update, 'message') and update.message:
-                    await update.message.reply("❌ Доступ запрещен.")
-                elif hasattr(update, 'callback_query') and update.callback_query:
-                    await update.callback_query.answer("❌ Доступ запрещен.", show_alert=True)
-            except Exception:
-                pass
-
-            raise CancelHandler()
-
-# Регистрируем middleware администратора после логирования
-dp.middleware.setup(AdminOnlyMiddleware())
 
 # Настройка логирования
 logging.basicConfig(
@@ -489,61 +499,64 @@ post_storage = PostStorage(Config.DATA_FILE)
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     """Команда /start"""
-    welcome_text = """
-🌟 **Добро пожаловать в бота для автопостинга!**
+    user_id = message.from_user.id
+    is_admin = user_id == Config.ADMIN_ID
+    
+    welcome_text = f"""
+🌟 Добро пожаловать в бота для автопостинга!
 
 Я помогу вам планировать посты в канале с учетом новосибирского времени (NSK, UTC+7).
 
-📢 **Канал для публикации:** `{channel}`
+📢 Канал для публикации: {escape_html(str(Config.CHANNEL_ID))}
+👤 Ваш ID: {user_id}
+{"👑 Роль: Администратор" if is_admin else "👤 Роль: Пользователь"}
 
-**Доступные команды:**
-• `/post` - создать новый пост
-• `/list` - список запланированных постов
-• `/delete <id>` - удалить запланированный пост
-• `/help` - подробная справка
-• `/cancel` - отменить текущее действие
+Доступные команды:
+• /post - создать новый пост
+• /list - список запланированных постов
+• /delete &lt;id&gt; - удалить запланированный пост
+• /help - подробная справка
+• /cancel - отменить текущее действие
 
-💡 **Быстрые действия:** используйте кнопки ниже
-    """.format(channel=Config.CHANNEL_ID)
+💡 Быстрые действия: используйте кнопки ниже
+    """
     
     await message.reply(welcome_text, reply_markup=get_main_keyboard())
 
 @dp.message_handler(commands=['help'])
 async def cmd_help(message: types.Message):
     """Команда /help"""
-    help_text = """
-❓ **Справка по использованию**
+    help_text = f"""
+❓ Справка по использованию
 
-📝 **Создание поста:**
-1. Нажмите "Новый пост" или отправьте `/post`
+📝 Создание поста:
+1. Нажмите "Новый пост" или отправьте /post
 2. Введите текст поста (можно использовать HTML)
 3. Укажите время публикации
 4. Выберите через сколько дней удалить (минимум 1 день)
 5. Подтвердите публикацию
 
-⏰ **Форматы времени:**
-• `14:30` - сегодня в 14:30 (или завтра если прошло)
-• `завтра 10:00` - завтра в 10:00
-• `15.01.2024 14:30` - конкретная дата
-• `2ч` - через 2 часа
-• `3д` - через 3 дня
-• `30м` - через 30 минут
+⏰ Форматы времени:
+• 14:30 - сегодня в 14:30 (или завтра если прошло)
+• завтра 10:00 - завтра в 10:00
+• 15.01.2024 14:30 - конкретная дата
+• 2ч - через 2 часа
+• 3д - через 3 дня
+• 30м - через 30 минут
 
-🗑 **Удаление постов:**
-• Минимальный срок: {min} день
-• Максимальный срок: {max} дней
+🗑 Удаление постов:
+• Минимальный срок: {Config.MIN_DELETE_DAYS} день
+• Максимальный срок: {Config.MAX_DELETE_DAYS} дней
 • Можно выбрать из предложенных вариантов
 
-📋 **Управление:**
-• `/list` - показать все запланированные посты
-• `/delete <id>` - удалить пост по ID
-• `/cancel` - отменить текущее действие
+📋 Управление:
+• /list - показать все запланированные посты
+• /delete &lt;id&gt; - удалить пост по ID
+• /cancel - отменить текущее действие
 
-🕐 **Часовой пояс:** Новосибирск (NSK, UTC+7)
-    """.format(
-        min=Config.MIN_DELETE_DAYS,
-        max=Config.MAX_DELETE_DAYS
-    )
+🕐 Часовой пояс: Новосибирск (NSK, UTC+7)
+📢 Канал: {escape_html(str(Config.CHANNEL_ID))}
+    """
     
     await message.reply(help_text, reply_markup=get_main_keyboard())
 
@@ -551,12 +564,12 @@ async def cmd_help(message: types.Message):
 async def cmd_post(message: types.Message):
     """Команда /post - создание нового поста"""
     await message.reply(
-        "📝 **Отправьте текст поста**\n\n"
+        "📝 Отправьте текст поста\n\n"
         "Можно использовать HTML-разметку:\n"
-        "• `<b>жирный</b>`\n"
-        "• `<i>курсив</i>`\n"
-        "• `<code>код</code>`\n"
-        "• `<a href='url'>ссылка</a>`\n\n"
+        "• &lt;b&gt;жирный&lt;/b&gt;\n"
+        "• &lt;i&gt;курсив&lt;/i&gt;\n"
+        "• &lt;code&gt;код&lt;/code&gt;\n"
+        "• &lt;a href='url'&gt;ссылка&lt;/a&gt;\n\n"
         "Или нажмите кнопку ниже для отмены",
         reply_markup=InlineKeyboardMarkup().add(
             InlineKeyboardButton("❌ Отмена", callback_data="cancel")
@@ -571,15 +584,16 @@ async def process_content(message: types.Message, state: FSMContext):
         await message.reply("❌ Отправьте текстовое сообщение")
         return
     
+    # Сохраняем оригинальный HTML
     await state.update_data(content=message.html_text)
     await message.reply(
-        "⏰ **Укажите время публикации**\n\n"
+        "⏰ Укажите время публикации\n\n"
         "Например:\n"
-        "• `14:30` - сегодня\n"
-        "• `завтра 10:00` - завтра\n"
-        "• `15.01.2024 14:30` - дата\n"
-        "• `2ч` - через 2 часа\n"
-        "• `3д` - через 3 дня",
+        "• 14:30 - сегодня\n"
+        "• завтра 10:00 - завтра\n"
+        "• 15.01.2024 14:30 - дата\n"
+        "• 2ч - через 2 часа\n"
+        "• 3д - через 3 дня",
         reply_markup=get_time_keyboard()
     )
     await PostStates.waiting_for_publish_time.set()
@@ -599,7 +613,7 @@ async def process_publish_time(message: types.Message, state: FSMContext):
     warning = f"\n{error}" if error else ""
     
     await message.reply(
-        f"🗑 **Через сколько дней удалить пост?**\n"
+        f"🗑 Через сколько дней удалить пост?\n"
         f"(минимум {Config.MIN_DELETE_DAYS} день, максимум {Config.MAX_DELETE_DAYS} дней){warning}",
         reply_markup=get_delete_keyboard()
     )
@@ -619,7 +633,7 @@ async def process_time_callback(callback: types.CallbackQuery, state: FSMContext
     
     warning = f"\n{error}" if error else ""
     await callback.message.edit_text(
-        f"🗑 **Через сколько дней удалить пост?**\n"
+        f"🗑 Через сколько дней удалить пост?\n"
         f"(минимум {Config.MIN_DELETE_DAYS} день, максимум {Config.MAX_DELETE_DAYS} дней){warning}",
         reply_markup=get_delete_keyboard()
     )
@@ -672,14 +686,14 @@ async def show_confirmation(message: types.Message, state: FSMContext, delete_da
     )
     
     preview = f"""
-📝 **Предпросмотр поста:**
+📝 Предпросмотр поста:
 
-{content}
+{escape_html(content[:500])}{'...' if len(content) > 500 else ''}
 
 ---
 {format_post_info(temp_post, detailed=True)}
 
-✅ **Всё верно?**
+✅ Всё верно?
     """
     
     if is_callback:
@@ -711,8 +725,15 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
     # Планируем публикацию
     asyncio.create_task(schedule_post_task(post))
     
+    # Уведомляем админа о новом посте
+    if Config.ADMIN_ID and Config.ADMIN_ID != callback.from_user.id:
+        await notify_admin(
+            f"📝 Новый пост создан пользователем {callback.from_user.id}\n\n"
+            f"{format_post_info(post, detailed=True)}"
+        )
+    
     await callback.message.edit_text(
-        f"✅ **Пост успешно запланирован!**\n\n"
+        f"✅ Пост успешно запланирован!\n\n"
         f"{format_post_info(post, detailed=True)}\n\n"
         f"🔔 Я уведомлю вас о публикации",
         reply_markup=get_main_keyboard()
@@ -725,7 +746,7 @@ async def confirm_post(callback: types.CallbackQuery, state: FSMContext):
 async def cancel_post(callback: types.CallbackQuery, state: FSMContext):
     """Отмена публикации"""
     await callback.message.edit_text(
-        "❌ **Создание поста отменено**",
+        "❌ Создание поста отменено",
         reply_markup=get_main_keyboard()
     )
     await state.finish()
@@ -735,7 +756,7 @@ async def cancel_post(callback: types.CallbackQuery, state: FSMContext):
 async def back_to_content(callback: types.CallbackQuery, state: FSMContext):
     """Возврат к вводу контента"""
     await callback.message.edit_text(
-        "📝 **Отправьте текст поста**",
+        "📝 Отправьте текст поста",
         reply_markup=None
     )
     await PostStates.waiting_for_content.set()
@@ -745,7 +766,7 @@ async def back_to_content(callback: types.CallbackQuery, state: FSMContext):
 async def back_to_time(callback: types.CallbackQuery, state: FSMContext):
     """Возврат к выбору времени"""
     await callback.message.edit_text(
-        "⏰ **Укажите время публикации**",
+        "⏰ Укажите время публикации",
         reply_markup=get_time_keyboard()
     )
     await PostStates.waiting_for_publish_time.set()
@@ -754,17 +775,26 @@ async def back_to_time(callback: types.CallbackQuery, state: FSMContext):
 @dp.message_handler(commands=['list'])
 async def cmd_list(message: types.Message):
     """Команда /list - список постов"""
-    active_posts = post_storage.get_active()
+    user_id = message.from_user.id
+    is_admin = user_id == Config.ADMIN_ID
+    
+    if is_admin:
+        # Админ видит все посты
+        active_posts = post_storage.get_active()
+    else:
+        # Пользователь видит только свои посты
+        all_posts = post_storage.get_by_user(user_id)
+        active_posts = [p for p in all_posts if p.status == PostStatus.SCHEDULED.value]
     
     if not active_posts:
         await message.reply(
-            "📭 **Нет запланированных постов**\n\n"
+            "📭 Нет запланированных постов\n\n"
             "Создайте новый пост с помощью /post",
             reply_markup=get_main_keyboard()
         )
         return
     
-    response = ["📋 **Запланированные посты:**\n"]
+    response = ["📋 Запланированные посты:\n"]
     
     for i, post in enumerate(active_posts[:10], 1):
         response.append(f"{i}. {format_post_info(post)}")
@@ -772,7 +802,7 @@ async def cmd_list(message: types.Message):
     if len(active_posts) > 10:
         response.append(f"\n...и еще {len(active_posts) - 10} постов")
     
-    response.append("\nИспользуйте `/delete <id>` для удаления")
+    response.append("\nИспользуйте /delete &lt;id&gt; для удаления")
     
     await message.reply("\n\n".join(response), reply_markup=get_main_keyboard())
 
@@ -780,18 +810,25 @@ async def cmd_list(message: types.Message):
 async def cmd_delete(message: types.Message):
     """Команда /delete - удаление поста"""
     args = message.get_args()
+    user_id = message.from_user.id
+    is_admin = user_id == Config.ADMIN_ID
     
     if not args:
         await message.reply(
-            "❌ **Укажите ID поста**\n\n"
-            "Пример: `/delete abc123`\n"
+            "❌ Укажите ID поста\n\n"
+            "Пример: /delete abc123\n"
             "Список ID можно посмотреть в /list"
         )
         return
     
     post = post_storage.get(args)
     if not post:
-        await message.reply(f"❌ Пост с ID `{args}` не найден")
+        await message.reply(f"❌ Пост с ID {escape_html(args)} не найден")
+        return
+    
+    # Проверяем права на удаление
+    if not is_admin and post.created_by != user_id:
+        await message.reply("❌ У вас нет прав на удаление этого поста")
         return
     
     if post.status != PostStatus.SCHEDULED.value:
@@ -801,72 +838,62 @@ async def cmd_delete(message: types.Message):
     # Удаляем пост
     post_storage.remove(args)
     
-    await message.reply(f"✅ Пост `{args}` удален из расписания")
-
-@dp.callback_query_handler(lambda c: c.data == 'new_post')
-async def callback_new_post(callback: types.CallbackQuery):
-    """Кнопка создания нового поста"""
-    await cmd_post(callback.message)
-    await callback.answer()
-
-@dp.callback_query_handler(lambda c: c.data == 'list_posts')
-async def callback_list_posts(callback: types.CallbackQuery):
-    """Кнопка списка постов"""
-    await cmd_list(callback.message)
-    await callback.answer()
-
-@dp.callback_query_handler(lambda c: c.data == 'delete_post')
-async def callback_delete_post(callback: types.CallbackQuery):
-    """Кнопка удаления поста"""
-    active_posts = post_storage.get_active()
+    # Уведомляем админа
+    if is_admin and post.created_by != user_id:
+        await notify_admin(
+            f"🗑 Админ удалил пост пользователя {post.created_by}\n\n"
+            f"{format_post_info(post, detailed=True)}"
+        )
     
-    if not active_posts:
-        await callback.answer("Нет постов для удаления", show_alert=True)
+    await message.reply(f"✅ Пост {escape_html(args)} удален из расписания")
+
+@dp.message_handler(commands=['stats'])
+async def cmd_stats(message: types.Message):
+    """Команда /stats - статистика (только для админа)"""
+    if message.from_user.id != Config.ADMIN_ID:
+        await message.reply("❌ У вас нет доступа к этой команде")
         return
     
-    keyboard = InlineKeyboardMarkup(row_width=1)
-    for post in active_posts[:5]:
-        time_str = post.publish_time_dt.strftime("%d.%m %H:%M")
-        short_content = post.content[:30] + "..." if len(post.content) > 30 else post.content
-        keyboard.add(InlineKeyboardButton(
-            f"🗑 {time_str} - {short_content}",
-            callback_data=f"del_{post.id}"
-        ))
+    all_posts = post_storage.get_all()
     
-    keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="back_to_main"))
+    # Статистика по статусам
+    status_counts = {}
+    for post in all_posts:
+        status_counts[post.status] = status_counts.get(post.status, 0) + 1
     
-    await callback.message.edit_text(
-        "🗑 **Выберите пост для удаления:**",
-        reply_markup=keyboard
-    )
-    await callback.answer()
+    # Статистика по пользователям
+    user_stats = {}
+    for post in all_posts:
+        if post.created_by:
+            user_stats[post.created_by] = user_stats.get(post.created_by, 0) + 1
+    
+    stats_text = f"""
+📊 Статистика бота
 
-@dp.callback_query_handler(lambda c: c.data.startswith('del_'))
-async def callback_delete_specific(callback: types.CallbackQuery):
-    """Удаление конкретного поста по кнопке"""
-    post_id = callback.data.replace('del_', '')
-    post = post_storage.get(post_id)
-    
-    if not post:
-        await callback.answer("Пост не найден", show_alert=True)
-        return
-    
-    post_storage.remove(post_id)
-    
-    await callback.answer("✅ Пост удален", show_alert=True)
-    await callback_list_posts(callback)
+📝 Всего постов: {len(all_posts)}
 
-@dp.callback_query_handler(lambda c: c.data == 'help')
-async def callback_help(callback: types.CallbackQuery):
-    """Кнопка помощи"""
-    await cmd_help(callback.message)
+Статусы:
+"""
+    for status, count in status_counts.items():
+        stats_text += f"  {status}: {count}\n"
+    
+    stats_text += f"\n👥 Пользователи:\n"
+    for user_id, count in list(user_stats.items())[:10]:
+        stats_text += f"  ID {user_id}: {count} постов\n"
+    
+    await message.reply(stats_text, reply_markup=get_main_keyboard())
+
+@dp.callback_query_handler(lambda c: c.data == 'stats')
+async def callback_stats(callback: types.CallbackQuery):
+    """Кнопка статистики"""
+    await cmd_stats(callback.message)
     await callback.answer()
 
 @dp.callback_query_handler(lambda c: c.data == 'back_to_main')
 async def back_to_main(callback: types.CallbackQuery):
     """Возврат в главное меню"""
     await callback.message.edit_text(
-        "🌟 **Главное меню**\n\nВыберите действие:",
+        "🌟 Главное меню\n\nВыберите действие:",
         reply_markup=get_main_keyboard()
     )
     await callback.answer()
@@ -906,7 +933,7 @@ async def publish_post(post: ScheduledPost):
         message = await bot.send_message(
             post.channel_id,
             content,
-            parse_mode=ParseMode.MARKDOWN_V2
+            parse_mode=ParseMode.HTML
         )
         
         # Обновляем статус
@@ -923,28 +950,39 @@ async def publish_post(post: ScheduledPost):
             try:
                 await bot.send_message(
                     post.created_by,
-                    f"✅ **Пост опубликован!**\n\n{format_post_info(post, detailed=True)}"
+                    f"✅ Пост опубликован!\n\n{format_post_info(post, detailed=True)}"
                 )
             except:
                 pass
+        
+        # Уведомляем админа
+        if Config.ADMIN_ID and Config.ADMIN_ID != post.created_by:
+            await notify_admin(
+                f"✅ Пост опубликован пользователем {post.created_by}\n\n"
+                f"{format_post_info(post, detailed=True)}"
+            )
         
         # Планируем удаление
         if post.delete_after_days:
             await schedule_deletion(post)
             
     except Exception as e:
-        logging.error(f"❌ Ошибка публикации поста {post.id}: {e}")
+        error_msg = f"❌ Ошибка публикации поста {post.id}: {e}"
+        logging.error(error_msg)
         post_storage.update(post.id, status=PostStatus.FAILED.value)
         
-        # Уведомляем об ошибке
+        # Уведомляем создателя
         if post.created_by:
             try:
                 await bot.send_message(
                     post.created_by,
-                    f"❌ **Ошибка публикации поста**\n\n{post.id}\n\nОшибка: {e}"
+                    f"❌ Ошибка публикации поста\n\n{post.id}\n\nОшибка: {escape_html(str(e))}"
                 )
             except:
                 pass
+        
+        # Уведомляем админа
+        await notify_admin(f"❌ Ошибка публикации\n\n{error_msg}")
 
 async def schedule_deletion(post: ScheduledPost):
     """Планирование удаления поста"""
@@ -971,13 +1009,22 @@ async def delete_post(post: ScheduledPost):
             try:
                 await bot.send_message(
                     post.created_by,
-                    f"🗑 **Пост удален**\n\n{format_post_info(post)}"
+                    f"🗑 Пост удален\n\n{format_post_info(post)}"
                 )
             except:
                 pass
+        
+        # Уведомляем админа
+        if Config.ADMIN_ID and Config.ADMIN_ID != post.created_by:
+            await notify_admin(
+                f"🗑 Пост удален пользователем {post.created_by}\n\n"
+                f"{format_post_info(post)}"
+            )
                 
     except Exception as e:
-        logging.error(f"❌ Ошибка удаления поста {post.id}: {e}")
+        error_msg = f"❌ Ошибка удаления поста {post.id}: {e}"
+        logging.error(error_msg)
+        await notify_admin(error_msg)
 
 async def schedule_post_task(post: ScheduledPost):
     """Задача планирования поста"""
@@ -1005,6 +1052,15 @@ async def check_scheduled_posts():
             asyncio.create_task(schedule_post_task(post))
     
     logging.info(f"📊 Загружено {len(post_storage.get_active())} активных постов")
+    
+    # Уведомляем админа о запуске
+    if Config.ADMIN_ID:
+        active_count = len(post_storage.get_active())
+        await notify_admin(
+            f"🚀 Бот запущен\n\n"
+            f"📢 Канал: {Config.CHANNEL_ID}\n"
+            f"📊 Активных постов: {active_count}"
+        )
 
 # ==================== ЗАПУСК БОТА ====================
 
@@ -1015,9 +1071,20 @@ async def on_startup(dp):
     # Проверка подключения к каналу
     try:
         chat = await bot.get_chat(Config.CHANNEL_ID)
-        logging.info(f"📢 Подключен к каналу: {chat.title}")
+        channel_title = chat.title if hasattr(chat, 'title') else str(Config.CHANNEL_ID)
+        logging.info(f"📢 Подключен к каналу: {channel_title}")
+        
+        # Проверяем права бота в канале
+        bot_member = await chat.get_member(bot.id)
+        if bot_member.status not in ['administrator', 'creator']:
+            logging.warning("⚠️ Бот не является администратором канала!")
+            if Config.ADMIN_ID:
+                await notify_admin("⚠️ Бот не является администратором канала! Некоторые функции могут не работать.")
     except Exception as e:
-        logging.error(f"❌ Ошибка подключения к каналу: {e}")
+        error_msg = f"❌ Ошибка подключения к каналу: {e}"
+        logging.error(error_msg)
+        if Config.ADMIN_ID:
+            await notify_admin(error_msg)
         return
     
     # Проверка запланированных постов
@@ -1028,6 +1095,11 @@ async def on_startup(dp):
 async def on_shutdown(dp):
     """Действия при остановке"""
     logging.info("🛑 Бот останавливается...")
+    
+    # Уведомляем админа об остановке
+    if Config.ADMIN_ID:
+        await notify_admin("🛑 Бот остановлен")
+    
     await bot.close()
     logging.info("👋 До свидания!")
 
