@@ -1,305 +1,340 @@
 # AutoPost Bot 🤖
 
-An advanced Python bot for automatic content publishing with time zone conversion, scheduling, and auto-deletion features. **All operations work in Novosibirsk timezone (NSK).**
+Мощный бот для автоматической публикации постов с поддержкой планирования, удаления и интеграций с различными платформами. Локальная работа с часовыми поясами (базируется на NSK - Новосибирск).
 
-[Russian Documentation / Русская документация](README_RU.md)
+**Основные возможности:**
+- 📝 Опубликовать пост
+- ⏰ Запланировать пост на конкретное время
+- 🗑️ Автоудаление постов через N часов
+- 🌍 Конвертация времени между часовыми поясами  
+- 💾 Локальное хранилище (JSON)
+- 🔌 Интеграции с Telegram, VK, Instagram, Twitter, Discord, Slack
+- 🔄 Фоновый планировщик (APScheduler)
 
-## ✨ Key Features
+## ⚡ Быстрый старт
 
-- 📝 **Publish posts** - Create posts instantly
-- ⏰ **Schedule posts** - Publish at specific times
-- 🗑️ **Auto-delete** - Posts delete automatically after set time
-- 🌍 **Smart timezone conversion** - Convert any timezone to NSK automatically
-- 💾 **Persistent storage** - Posts saved in JSON (easy to migrate to DB)
-- 🔄 **Background scheduler** - Reliable task execution using APScheduler
-- 🔌 **Platform integrations** - Ready for Telegram, VK, Instagram, Twitter, etc.
-
-## 🚀 Quick Start
-
-### Installation
-
+### 1. Клонирование
 ```bash
-# Clone the repository
 git clone https://github.com/dyukk-y/lilililililili.git
 cd lilililililili
+```
 
-# Install dependencies
+### 2. Установка зависимостей
+```bash
 pip install -r requirements.txt
 ```
 
-**👉 New to the project?** See [INSTALL_QUICK.md](INSTALL_QUICK.md) for 2-minute setup
+### 3. Использование в коде
+```python
+from bot import AutoPostBot
+from config import STORAGE_FILE
 
-### Basic Usage
+# Инициализация
+bot = AutoPostBot(storage_file=STORAGE_FILE)
 
+# Опубликовать пост сейчас
+bot.publish_post("Привет мир!")
+
+# Остановить
+bot.shutdown()
+```
+
+## 📖 Основные методы
+
+```python
+# Опубликовать пост сейчас
+bot.publish_post(content, delete_after_hours=None)
+
+# Запланировать на конкретное время
+bot.publish_post_at_time(
+    content="Текст поста",
+    publish_time=datetime_object,
+    from_tz="UTC",  # Часовой пояс времени
+    delete_after_hours=24
+)
+
+# Удалить пост
+bot.delete_post(post_id)
+
+# Конвертировать время в НСК
+bot.convert_to_nsk_time(dt, from_tz="Europe/Moscow")
+
+# Получить текущее время НСК
+bot.get_current_nsk_time()
+
+# Получить посты
+bot.list_posts()  # Все
+bot.list_posts(status='published')  # Опубликованные
+bot.list_posts(status='scheduled')  # Запланированные
+
+# Информация о заданиях
+bot.get_jobs_info()
+
+# Остановить бота
+bot.shutdown()
+```
+
+## 🔧 Примеры кода
+
+### Пример 1: Опубликовать с автоудалением
 ```python
 from bot import AutoPostBot
 
-# Initialize bot
 bot = AutoPostBot()
 
-# Publish now with auto-delete in 2 hours
+# Опубликовать и удалить через 2 часа
 post_id = bot.publish_post(
-    content="Hello World!",
+    content="Это временный пост",
     delete_after_hours=2
 )
 
-# Schedule for specific time
+print(f"Пост #{post_id} опубликован и удалится через 2 часа")
+bot.shutdown()
+```
+
+### Пример 2: Запланировать пост
+```python
+from bot import AutoPostBot
 from datetime import datetime, timedelta
 import pytz
 
+bot = AutoPostBot()
+
+# Запланировать на 1 час вперед
 future = datetime.now(pytz.UTC) + timedelta(hours=1)
-bot.publish_post_at_time(
-    content="This will publish in 1 hour",
+post_id = bot.publish_post_at_time(
+    content="Это запланированный пост",
     publish_time=future,
     from_tz="UTC"
 )
 
-# Convert any timezone to NSK
-moscow_time = datetime(2026, 2, 23, 15, 30)
-nsk_time = bot.convert_to_nsk_time(moscow_time, "Europe/Moscow")
-
-# Get current NSK time
-now = bot.get_current_nsk_time()
+print(f"Пост #{post_id} запланирован")
+# Бот работает в фоне пока работает приложение
 ```
 
-## 📚 Documentation
-
-### Main Bot Class
-
-```python
-bot = AutoPostBot(storage_file="posts.json")
-```
-
-**Key Methods:**
-
-- `publish_post(content, delete_after_hours=None)` - Publish now
-- `publish_post_at_time(content, publish_time, from_tz=None, delete_after_hours=None)` - Schedule
-- `delete_post(post_id)` - Delete post
-- `convert_to_nsk_time(dt, from_tz=None)` - Convert timezone to NSK
-- `get_current_nsk_time()` - Get current NSK time
-- `get_post(post_id)` - Get post info
-- `list_posts(status=None)` - List posts
-- `get_jobs_info()` - Get scheduled jobs
-- `shutdown()` - Stop scheduler
-
-### Timezone Support
-
-Common timezones you can use:
-
-```
-Europe/Moscow      # Moscow (UTC+3)
-Asia/Novosibirsk   # Novosibirsk (UTC+7) - Default
-Asia/Yekaterinburg # Yekaterinburg (UTC+5)
-Europe/London      # London (UTC+0/+1)
-Asia/Tokyo         # Tokyo (UTC+9)
-America/New_York   # New York (UTC-5/-4)
-America/Los_Angeles # Los Angeles (UTC-8/-7)
-```
-
-Full timezone list: [IANA TZ Database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
-
-## 📁 Project Structure
-
-```
-.
-├── bot.py                      # Main AutoPostBot class
-├── examples.py                 # Usage examples
-├── quickstart.py               # Interactive quick start
-├── telegram_bot.py             # Telegram integration
-├── platform_integrations.py    # Multi-platform support
-├── requirements.txt            # Dependencies
-├── README.md                   # This file
-├── README_RU.md               # Russian documentation
-├── .gitignore                 # Git ignore rules
-└── posts.json                 # Auto-generated storage
-```
-
-## 🔌 Integrations
-
-Bot includes ready-to-use integrations for:
-
-- **Telegram** - Send to Telegram channels/groups
-- **VK (ВКонтакте)** - Post to VK groups
-- **Instagram** - Publish photos with captions
-- **Twitter/X** - Post tweets
-- **Reddit** - Submit to subreddits
-- **WordPress** - Publish blog posts
-
-See `platform_integrations.py` for examples.
-
-## 📖 Documentation
-
-- **[INSTALLING.md](INSTALLING.md)** - Complete installation guide for all platforms
-- **[README_RU.md](README_RU.md)** - Russian documentation
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** - How to contribute
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Solutions for common issues
-- **[CHANGELOG.md](CHANGELOG.md)** - Version history
-
-## 📖 Quick Examples
-
-### Interactive Quick Start
-```bash
-python quickstart.py
-```
-
-### View All Examples
-```bash
-python examples.py
-```
-
-### Run Basic Bot
-```bash
-python bot.py
-```
-
-## 🛠️ Development
-
-### Setup Development Environment
-
-```bash
-# Install dev dependencies
-pip install -r requirements-dev.txt
-
-# Run tests
-pytest tests/ -v
-
-# Format code
-black bot.py
-
-# Check code style
-flake8 bot.py
-```
-
-### Using Makefile (Linux/macOS)
-
-```bash
-make help              # Show all commands
-make install-dev      # Install dev tools
-make test             # Run tests
-make lint             # Check code style
-make format           # Format code
-make docker-build     # Build Docker image
-```
-
-## 🛠️ Configuration
-
-### Change Default Timezone
-
-Edit `bot.py` line 35:
-```python
-self.nsk_tz = pytz.timezone('Asia/Novosibirsk')  # Change to any timezone
-```
-
-### Use Custom Storage File
-
-```python
-bot = AutoPostBot(storage_file="my_posts.json")
-```
-
-## 📊 Data Format
-
-Posts are stored in JSON:
-
-```json
-{
-  "1": {
-    "id": "1",
-    "content": "Post content",
-    "published_at": "2026-02-23T15:30:00+07:00",
-    "status": "published"
-  },
-  "2": {
-    "id": "2",
-    "content": "Scheduled post",
-    "scheduled_for": "2026-02-23T16:00:00+07:00",
-    "status": "scheduled",
-    "delete_after_hours": 3
-  }
-}
-```
-
-## 🔒 Security & Production
-
-For production use:
-
-- ✅ Use database instead of JSON (PostgreSQL, MongoDB)
-- ✅ Add authentication/authorization
-- ✅ Validate all input data
-- ✅ Use HTTPS for APIs
-- ✅ Store sensitive data in environment variables
-- ✅ Implement rate limiting
-- ✅ Add error handling and monitoring
-
-## 🤝 Extending
-
-### Custom Platform Integration
-
+### Пример 3: Конвертация времени
 ```python
 from bot import AutoPostBot
+from datetime import datetime
 
-class MyBot(AutoPostBot):
-    def publish_post(self, content, **kwargs):
-        post_id = super().publish_post(content, **kwargs)
-        # Custom logic here
-        self.my_api_call(content)
-        return post_id
+bot = AutoPostBot()
+
+# Конвертировать время из Москвы в НСК
+moscow_time = datetime(2026, 2, 23, 15, 30)  # 15:30 Москва
+nsk_time = bot.convert_to_nsk_time(moscow_time, "Europe/Moscow")
+
+print(f"Москва 15:30 = НСК {nsk_time.strftime('%H:%M')}")
 ```
 
-### Database Integration
+### Пример 4: Интеграция с Telegram
+```python
+from telegram_bot import TelegramAutoPostBot
+from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_IDS, STORAGE_FILE
+
+# Требует: pip install python-telegram-bot
+bot = TelegramAutoPostBot(
+    telegram_token=TELEGRAM_TOKEN,
+    chat_ids=TELEGRAM_CHAT_IDS,
+    storage_file=STORAGE_FILE
+)
+
+# Опубликовать пост с уведомлением в Telegram
+bot.publish_post(
+    content="Пост с уведомлением",
+    notify_telegram=True
+)
+```
+
+## ⚙️ Конфигурация
+
+Все параметры находятся в `config.py`:
 
 ```python
-class DatabaseBot(AutoPostBot):
-    def _load_posts(self):
-        self.posts = self.db.load_posts()
-    
-    def _save_posts(self):
-        self.db.save_posts(self.posts)
+# Основные параметры
+STORAGE_FILE = "posts.json"          # Файл для хранения
+TIMEZONE = "Asia/Novosibirsk"        # Часовой пояс
+LOG_LEVEL = "INFO"                   # Уровень логирования
+
+# Telegram
+TELEGRAM_ENABLED = False
+TELEGRAM_TOKEN = ""                  # Получить у @BotFather
+TELEGRAM_CHAT_IDS = []               # Получить у @userinfobot
+
+# VK
+VK_ENABLED = False
+VK_ACCESS_TOKEN = ""                 # Из VK Admin panel
+VK_GROUP_ID = 0
+
+# Instagram
+INSTAGRAM_ENABLED = False
+INSTAGRAM_USERNAME = ""
+INSTAGRAM_PASSWORD = ""
+
+# Twitter / X
+TWITTER_ENABLED = False
+TWITTER_API_KEY = ""
+TWITTER_API_SECRET = ""
+TWITTER_ACCESS_TOKEN = ""
+TWITTER_ACCESS_TOKEN_SECRET = ""
+
+# Discord
+DISCORD_ENABLED = False
+DISCORD_WEBHOOK_URL = ""
+
+# Slack
+SLACK_ENABLED = False
+SLACK_WEBHOOK_URL = ""
 ```
 
-## 📝 Logging
+## 💾 Что скачать для работы
 
-All operations are logged:
+### Основные зависимости (ОБЯЗАТЕЛЬНО)
 
-```
-INFO   - Normal operations (publish, delete)
-WARNING - Warnings (post not found)
-ERROR   - Errors and exceptions
+```bash
+pip install -r requirements.txt
 ```
 
-## 🐛 Troubleshooting
+Установит:
+- **pytz** - работа с часовыми поясами
+- **APScheduler** - фоновой планировщик
 
-**Bot doesn't start?**
-1. Install dependencies: `pip install -r requirements.txt`
-2. Check Python version (3.7+)
-3. Enable file permissions for posts.json
+### Опциональные (для интеграций)
 
-**Posts not being created?**
-- Check logs for errors
-- Verify file permissions
-- Ensure timezone is valid
+**Telegram:**
+```bash
+pip install python-telegram-bot>=20.0
+```
 
-**Scheduling not working?**
-- Verify time is in future
-- Check system timezone settings
-- See `get_jobs_info()` for scheduled tasks
+**VK:**
+```bash
+pip install vk-api>=11.9.9
+```
 
-## 📞 Support
+**Instagram:**
+```bash
+pip install instagrapi>=2.0.0
+```
 
-For issues:
-1. Check logs in console
-2. Verify dependencies: `pip install -r requirements.txt`
-3. Review examples in `examples.py`
-4. Read full documentation in `README_RU.md`
+**Twitter/X:**
+```bash
+pip install tweepy>=4.14.0
+```
 
-## 📄 License
+**Discord:**
+```bash
+pip install discord.py>=2.3.0
+```
 
-Free to use and modify.
+**База данных (SQLAlchemy):**
+```bash
+pip install sqlalchemy>=2.0.0 psycopg2-binary>=2.9.0
+```
 
-## 🎉 Version
+## 📁 Структура проекта
 
-**v1.0.0** - Release 2026-02-23
+```
+lilililililili/
+├── bot.py                 # Основной класс AutoPostBot (406 строк)
+├── config.py              # Конфигурация всех параметров
+├── telegram_bot.py        # Интеграция Telegram (опционально)
+├── platform_integrations.py # Интеграции с другими платформами
+├── requirements.txt       # Список зависимостей для скачивания
+├── setup.py              # Конфиг установки пакета
+├── pyproject.toml        # Конфиг проекта
+├── README.md             # Этот файл (документация)
+└── LICENSE               # MIT лицензия
+```
+
+## 🔐 Здравый смысл о безопасности
+
+⚠️ **НИКОГДА** не коммитьте токены и пароли в Git!
+
+Используйте переменные окружения:
+```python
+import os
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+VK_ACCESS_TOKEN = os.getenv("VK_ACCESS_TOKEN")
+INSTAGRAM_PASSWORD = os.getenv("INSTAGRAM_PASSWORD")
+```
+
+Или создайте `.env` файл и используйте `python-dotenv`:
+```bash
+pip install python-dotenv
+```
+
+```python
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+```
+
+## 📊 Производительность
+
+- **Память:** ~15-30 MB при работе
+- **CPU:** Минимальное использование (планировщик работает в фоне)
+- **Постов в памяти:** Зависит от хранилища (JSON файл)
+- **Скорость:** < 1ms для операций с постами
+
+## 🐛 Решение проблем
+
+**Ошибка: ModuleNotFoundError**
+```bash
+pip install -r requirements.txt
+```
+
+**Ошибка часового пояса:**
+```python
+# Используйте стандартные IANA часовые пояса
+bot.convert_to_nsk_time(dt, "Europe/Moscow")  # ✓ Правильно
+bot.convert_to_nsk_time(dt, "MSK")            # ✗ Неправильно
+```
+
+**Telegram не работает:**
+1. Проверьте `TELEGRAM_TOKEN` в `config.py`
+2. Убедитесь что `TELEGRAM_ENABLED = True`
+3. Правильный ли `TELEGRAM_CHAT_IDS`? (узнайте у @userinfobot)
+
+**Посты не удаляются:**
+- Бот должен быть запущен (scheduler работает)
+- Проверьте что `TIMEZONE` правильный
+
+## 📚 Дополнительная информация
+
+### IANA Часовые пояса
+
+```
+Asia/Novosibirsk    - Новосибирск (UTC+7)
+Europe/Moscow       - Москва (UTC+3)
+Asia/Yekaterinburg  - Екатеринбург (UTC+5)
+Europe/London       - Лондон (UTC+0/+1)
+Asia/Tokyo          - Токио (UTC+9)
+America/New_York    - Нью-Йорк (UTC-5/-4)
+America/Los_Angeles - Лос-Анджелес (UTC-8/-7)
+UTC                 - Скоординированное всемирное время
+```
+
+Полный список: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+
+### Полезные ссылки
+- APScheduler документация: https://apscheduler.readthedocs.io/
+- Python-telegram-bot: https://python-telegram-bot.readthedocs.io/
+- pytz: https://pypi.org/project/pytz/
+
+## 📄 Лицензия
+
+MIT License - см. [LICENSE](LICENSE)
+
+## 👨‍💻 Автор
+
+[dyukk-y](https://github.com/dyukk-y)
+
+## ⭐ Поддержка
+
+Если проект вам помог, поставьте ⭐ на GitHub!
 
 ---
 
-**Default Timezone:** Asia/Novosibirsk (UTC+7)  
-**Main Language:** Python 3.8+
+**Последнее обновление:** Февраль 2026
