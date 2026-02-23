@@ -433,7 +433,7 @@ def get_confirmation_keyboard() -> InlineKeyboardMarkup:
 Config.validate()
 
 # Инициализация бота
-bot = Bot(token=Config.BOT_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(token=Config.BOT_TOKEN, parse_mode=ParseMode.MARKDOWN_V2)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 dp.middleware.setup(LoggingMiddleware())
@@ -906,7 +906,7 @@ async def publish_post(post: ScheduledPost):
         message = await bot.send_message(
             post.channel_id,
             content,
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.MARKDOWN_V2
         )
         
         # Обновляем статус
