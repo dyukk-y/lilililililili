@@ -1,406 +1,515 @@
-import os
-import json
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Telegram бот для автопостинга с поддержкой новосибирского времени (UTC+7)
+Возможности:
+- Публикация постов в указанное время
+- Автоматическое удаление постов через заданный интервал
+- Конвертация времени в новосибирское
+"""
+
+import asyncio
 import logging
+import json
+import os
 from datetime import datetime, timedelta
-from typing import Dict, Optional, List
+from typing import Optional, Dict, Any
+from dataclasses import dataclass, asdict
+from enum import Enum
+
 import pytz
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.types import ParseMode
+from aiogram.utils import executor
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# ==================== КОНФИГУРАЦИЯ ====================
 
-class AutoPostBot:
-    """Бот для автопостинга с поддержкой времени Новосибирска"""
+class Config:
+    """Класс для хранения конфигурации"""
+    BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")  # Токен бота
+    NSK_TIMEZONE = pytz.timezone('Asia/Novosibirsk')  # Новосибирск (UTC+7)
+    DATA_FILE = "scheduled_posts.json"  # Файл для хранения постов
+    LOG_LEVEL = logging.INFO  # Уровень логирования
+
+# ==================== МОДЕЛИ ДАННЫХ ====================
+
+class PostStatus(Enum):
+    """Статусы поста"""
+    SCHEDULED = "scheduled"  # Запланирован
+    PUBLISHED = "published"  # Опубликован
+    DELETED = "deleted"      # Удален
+    FAILED = "failed"        # Ошибка
+
+@dataclass
+class ScheduledPost:
+    """Класс для хранения информации о запланированном посте"""
+    id: str
+    chat_id: int
+    content: str
+    publish_time: str  # ISO формат строки
+    delete_after_minutes: Optional[int] = None
+    message_id: Optional[int] = None
+    status: str = PostStatus.SCHEDULED.value
+    created_at: str = None
     
-    def __init__(self, storage_file: str = "posts.json"):
-        """
-        Инициализация бота
-        
-        Args:
-            storage_file: путь к файлу для хранения постов
-        """
-        self.storage_file = storage_file
-        self.scheduler = BackgroundScheduler()
-        self.nsk_tz = pytz.timezone('Asia/Novosibirsk')
-        self.posts: Dict[str, dict] = {}
-        self.post_counter = 0
-        
-        self._load_posts()
-        self._start_scheduler()
-        
-        logger.info("Бот инициализирован. Часовой пояс: Asia/Novosibirsk")
+    def __post_init__(self):
+        if not self.created_at:
+            self.created_at = datetime.now(Config.NSK_TIMEZONE).isoformat()
     
-    def _load_posts(self) -> None:
+    @property
+    def publish_time_dt(self) -> datetime:
+        """Получить время публикации как datetime"""
+        return datetime.fromisoformat(self.publish_time)
+    
+    @property
+    def delete_time(self) -> Optional[datetime]:
+        """Получить время удаления как datetime"""
+        if self.delete_after_minutes:
+            return self.publish_time_dt + timedelta(minutes=self.delete_after_minutes)
+        return None
+
+# ==================== ХРАНИЛИЩЕ ДАННЫХ ====================
+
+class PostStorage:
+    """Класс для работы с хранилищем постов"""
+    
+    def __init__(self, filename: str):
+        self.filename = filename
+        self.posts: Dict[str, ScheduledPost] = {}
+        self.load()
+    
+    def load(self):
         """Загрузка постов из файла"""
-        if os.path.exists(self.storage_file):
-            try:
-                with open(self.storage_file, 'r', encoding='utf-8') as f:
-                    self.posts = json.load(f)
-                    if self.posts:
-                        self.post_counter = max(
-                            int(post_id) for post_id in self.posts.keys()
-                        )
-                logger.info(f"Загружено {len(self.posts)} постов из хранилища")
-            except Exception as e:
-                logger.error(f"Ошибка при загрузке постов: {e}")
-                self.posts = {}
-        else:
-            self.posts = {}
+        try:
+            if os.path.exists(self.filename):
+                with open(self.filename, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    for post_id, post_data in data.items():
+                        self.posts[post_id] = ScheduledPost(**post_data)
+                logging.info(f"Загружено {len(self.posts)} постов из файла")
+        except Exception as e:
+            logging.error(f"Ошибка загрузки данных: {e}")
     
-    def _save_posts(self) -> None:
+    def save(self):
         """Сохранение постов в файл"""
         try:
-            with open(self.storage_file, 'w', encoding='utf-8') as f:
-                json.dump(self.posts, f, ensure_ascii=False, indent=2)
+            data = {post_id: asdict(post) for post_id, post in self.posts.items()}
+            with open(self.filename, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logger.error(f"Ошибка при сохранении постов: {e}")
+            logging.error(f"Ошибка сохранения данных: {e}")
     
-    def _start_scheduler(self) -> None:
-        """Запуск планировщика"""
-        if not self.scheduler.running:
-            self.scheduler.start()
-            logger.info("Планировщик запущен")
+    def add(self, post: ScheduledPost):
+        """Добавление поста"""
+        self.posts[post.id] = post
+        self.save()
     
-    def convert_to_nsk_time(self, dt: datetime, from_tz: Optional[str] = None) -> datetime:
-        """
-        Преобразование времени в время Новосибирска
-        
-        Args:
-            dt: объект datetime
-            from_tz: часовой пояс исходного времени (по умолчанию UTC)
-        
-        Returns:
-            datetime в часовом поясе Новосибирска
-        """
-        try:
-            if from_tz is None:
-                # Предполагаем UTC если не указан пояс
-                if dt.tzinfo is None:
-                    dt = pytz.UTC.localize(dt)
-                else:
-                    if dt.tzinfo is not None:
-                        dt = dt.astimezone(pytz.UTC)
-            else:
-                # Преобразование из указанного часового пояса
-                tz = pytz.timezone(from_tz)
-                if dt.tzinfo is None:
-                    dt = tz.localize(dt)
-                else:
-                    dt = dt.astimezone(tz)
-            
-            # Преобразование в NSK
-            nsk_time = dt.astimezone(self.nsk_tz)
-            logger.info(f"Преобразовано время: {dt} -> {nsk_time}")
-            return nsk_time
-        except Exception as e:
-            logger.error(f"Ошибка при преобразовании времени: {e}")
-            return None
+    def update(self, post_id: str, **kwargs):
+        """Обновление данных поста"""
+        if post_id in self.posts:
+            for key, value in kwargs.items():
+                if hasattr(self.posts[post_id], key):
+                    setattr(self.posts[post_id], key, value)
+            self.save()
     
-    def get_current_nsk_time(self) -> datetime:
-        """Получение текущего времени в Новосибирске"""
-        now_utc = datetime.now(pytz.UTC)
-        return now_utc.astimezone(self.nsk_tz)
-    
-    def publish_post(self, content: str, delete_after_hours: Optional[int] = None) -> str:
-        """
-        Опубликовать пост
-        
-        Args:
-            content: содержание поста
-            delete_after_hours: удалить пост через N часов (опционально)
-        
-        Returns:
-            ID опубликованного поста
-        """
-        try:
-            self.post_counter += 1
-            post_id = str(self.post_counter)
-            
-            current_nsk_time = self.get_current_nsk_time()
-            
-            post_data = {
-                "id": post_id,
-                "content": content,
-                "published_at": current_nsk_time.isoformat(),
-                "status": "published"
-            }
-            
-            # Если указано время удаления
-            if delete_after_hours:
-                delete_time = current_nsk_time + timedelta(hours=delete_after_hours)
-                post_data["delete_at"] = delete_time.isoformat()
-                
-                # Планируем удаление
-                self._schedule_post_deletion(post_id, delete_time)
-            
-            self.posts[post_id] = post_data
-            self._save_posts()
-            
-            logger.info(f"Пост #{post_id} опубликован. Содержание: {content[:50]}...")
-            
-            if delete_after_hours:
-                logger.info(f"Пост #{post_id} будет удален через {delete_after_hours} часов (в {post_data['delete_at']})")
-            
-            return post_id
-        except Exception as e:
-            logger.error(f"Ошибка при публикации поста: {e}")
-            return None
-    
-    def publish_post_at_time(self, content: str, publish_time: datetime, 
-                              from_tz: Optional[str] = None, 
-                              delete_after_hours: Optional[int] = None) -> str:
-        """
-        Опубликовать пост в указанное время
-        
-        Args:
-            content: содержание поста
-            publish_time: время публикации
-            from_tz: часовой пояс времени (по умолчанию UTC)
-            delete_after_hours: удалить пост через N часов после публикации
-        
-        Returns:
-            ID запланированного поста
-        """
-        try:
-            # Преобразуем время в NSK
-            nsk_publish_time = self.convert_to_nsk_time(publish_time, from_tz)
-            
-            if nsk_publish_time is None:
-                logger.error("Не удалось преобразовать время")
-                return None
-            
-            self.post_counter += 1
-            post_id = str(self.post_counter)
-            
-            post_data = {
-                "id": post_id,
-                "content": content,
-                "scheduled_for": nsk_publish_time.isoformat(),
-                "status": "scheduled",
-                "delete_after_hours": delete_after_hours
-            }
-            
-            self.posts[post_id] = post_data
-            
-            # Планируем публикацию
-            self._schedule_post_publication(post_id, nsk_publish_time, delete_after_hours)
-            
-            self._save_posts()
-            
-            logger.info(f"Пост #{post_id} запланирован на {nsk_publish_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            
-            return post_id
-        except Exception as e:
-            logger.error(f"Ошибка при планировании поста: {e}")
-            return None
-    
-    def _schedule_post_publication(self, post_id: str, publish_time: datetime, 
-                                    delete_after_hours: Optional[int] = None) -> None:
-        """Планирование публикации поста"""
-        try:
-            job_id = f"publish_{post_id}"
-            self.scheduler.add_job(
-                self._publish_scheduled_post,
-                args=[post_id, delete_after_hours],
-                trigger='date',
-                run_date=publish_time.replace(tzinfo=None),
-                timezone=self.nsk_tz,
-                id=job_id,
-                replace_existing=True
-            )
-            logger.info(f"Публикация поста #{post_id} запланирована на {publish_time}")
-        except Exception as e:
-            logger.error(f"Ошибка при планировании публикации: {e}")
-    
-    def _publish_scheduled_post(self, post_id: str, delete_after_hours: Optional[int] = None) -> None:
-        """Публикация запланированного поста"""
-        try:
-            if post_id in self.posts:
-                post = self.posts[post_id]
-                current_nsk_time = self.get_current_nsk_time()
-                
-                post["status"] = "published"
-                post["published_at"] = current_nsk_time.isoformat()
-                
-                # Если нужно удалить через время
-                if delete_after_hours:
-                    delete_time = current_nsk_time + timedelta(hours=delete_after_hours)
-                    post["delete_at"] = delete_time.isoformat()
-                    self._schedule_post_deletion(post_id, delete_time)
-                
-                self._save_posts()
-                logger.info(f"Запланированный пост #{post_id} опубликован")
-        except Exception as e:
-            logger.error(f"Ошибка при публикации запланированного поста: {e}")
-    
-    def delete_post(self, post_id: str) -> bool:
-        """
-        Удалить пост
-        
-        Args:
-            post_id: ID поста для удаления
-        
-        Returns:
-            True если успешно, False если пост не найден
-        """
-        try:
-            if post_id in self.posts:
-                content_preview = self.posts[post_id]["content"][:50]
-                del self.posts[post_id]
-                self._save_posts()
-                
-                # Отменяем запланированное удаление если оно было
-                delete_job_id = f"delete_{post_id}"
-                if self.scheduler.get_job(delete_job_id):
-                    self.scheduler.remove_job(delete_job_id)
-                
-                logger.info(f"Пост #{post_id} удален. Содержание: {content_preview}...")
-                return True
-            else:
-                logger.warning(f"Пост #{post_id} не найден")
-                return False
-        except Exception as e:
-            logger.error(f"Ошибка при удалении поста: {e}")
-            return False
-    
-    def _schedule_post_deletion(self, post_id: str, delete_time: datetime) -> None:
-        """Планирование удаления поста"""
-        try:
-            job_id = f"delete_{post_id}"
-            self.scheduler.add_job(
-                self.delete_post,
-                args=[post_id],
-                trigger='date',
-                run_date=delete_time.replace(tzinfo=None),
-                timezone=self.nsk_tz,
-                id=job_id,
-                replace_existing=True
-            )
-            logger.info(f"Удаление поста #{post_id} запланировано на {delete_time}")
-        except Exception as e:
-            logger.error(f"Ошибка при планировании удаления: {e}")
-    
-    def get_post(self, post_id: str) -> Optional[dict]:
-        """Получить информацию о посте"""
+    def get(self, post_id: str) -> Optional[ScheduledPost]:
+        """Получение поста по ID"""
         return self.posts.get(post_id)
     
-    def list_posts(self, status: Optional[str] = None) -> List[dict]:
-        """
-        Получить список постов
-        
-        Args:
-            status: фильтр по статусу ('published', 'scheduled' или None для всех)
-        
-        Returns:
-            Список постов
-        """
-        posts_list = list(self.posts.values())
-        
-        if status:
-            posts_list = [p for p in posts_list if p.get("status") == status]
-        
-        return sorted(posts_list, key=lambda x: x.get("published_at") or x.get("scheduled_for", ""), reverse=True)
+    def get_all(self) -> Dict[str, ScheduledPost]:
+        """Получение всех постов"""
+        return self.posts
     
-    def get_jobs_info(self) -> List[dict]:
-        """Получить информацию о запланированных заданиях"""
-        jobs_info = []
-        for job in self.scheduler.get_jobs():
-            jobs_info.append({
-                "id": job.id,
-                "next_run_time": str(job.next_run_time),
-                "trigger": str(job.trigger)
-            })
-        return jobs_info
-    
-    def shutdown(self) -> None:
-        """Остановить бота (завершить планировщик)"""
-        if self.scheduler.running:
-            self.scheduler.shutdown()
-            logger.info("Бот остановлен")
+    def remove(self, post_id: str):
+        """Удаление поста"""
+        if post_id in self.posts:
+            del self.posts[post_id]
+            self.save()
 
+# ==================== ИНИЦИАЛИЗАЦИЯ ====================
 
-# ============================================================================
-# ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ
-# ============================================================================
+# Инициализация бота и компонентов
+bot = Bot(token=Config.BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
+dp.middleware.setup(LoggingMiddleware())
+logging.basicConfig(level=Config.LOG_LEVEL)
 
-if __name__ == "__main__":
-    # Инициализация бота
-    bot = AutoPostBot()
+# Инициализация хранилища постов
+post_storage = PostStorage(Config.DATA_FILE)
+
+# ==================== СОСТОЯНИЯ FSM ====================
+
+class PostStates(StatesGroup):
+    """Состояния для создания поста"""
+    waiting_for_content = State()
+    waiting_for_time = State()
+    waiting_for_delete = State()
+
+# ==================== УТИЛИТЫ ====================
+
+def parse_time(input_time_str: str) -> Optional[datetime]:
+    """
+    Преобразует введенное время в новосибирское время (NSK, UTC+7)
     
-    print("=" * 60)
-    print("АВТОПОСТИНГ БОТ - ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ")
-    print("=" * 60)
+    Поддерживаемые форматы:
+    - "2024-01-15 14:30" - дата и время
+    - "14:30" - сегодня в это время (или завтра, если время прошло)
+    - "tomorrow 14:30" - завтра в это время
+    - "1h" - через 1 час
+    - "30m" - через 30 минут
+    - "1d" - через 1 день
+    """
+    now_nsk = datetime.now(Config.NSK_TIMEZONE)
+    input_time_str = input_time_str.lower().strip()
     
-    # Пример 1: Опубликовать пост сейчас
-    print("\n[1] Публикация поста сейчас:")
-    post_id = bot.publish_post(
-        content="Это мой первый пост! 🎉",
-        delete_after_hours=2
-    )
-    if post_id:
-        print(f"✓ Пост #{post_id} опубликован")
-        print(f"  Удалится через 2 часа")
-    
-    # Пример 2: Получить текущее время в Новосибирске
-    print("\n[2] Текущее время в Новосибирске:")
-    nsk_now = bot.get_current_nsk_time()
-    print(f"✓ {nsk_now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    
-    # Пример 3: Преобразовать время из другого часового пояса
-    print("\n[3] Преобразование времени:")
-    utc_time = datetime.now(pytz.UTC)
-    print(f"  UTC: {utc_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    nsk_time = bot.convert_to_nsk_time(utc_time)
-    print(f"  NSK: {nsk_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    
-    # Пример 4: Опубликовать пост в определенное время
-    print("\n[4] Планирование поста на будущее:")
-    future_time = datetime.now(pytz.UTC) + timedelta(hours=1)
-    post_id2 = bot.publish_post_at_time(
-        content="Это запланированный пост!",
-        publish_time=future_time,
-        from_tz="UTC",
-        delete_after_hours=3
-    )
-    if post_id2:
-        print(f"✓ Пост #{post_id2} запланирован")
-    
-    # Пример 5: Список всех постов
-    print("\n[5] Все опубликованные посты:")
-    published = bot.list_posts(status='published')
-    for post in published:
-        print(f"  #{post['id']}: {post['content'][:40]}... "
-              f"({post.get('published_at', 'N/A')})")
-    
-    print("\n[6] Запланированные посты:")
-    scheduled = bot.list_posts(status='scheduled')
-    for post in scheduled:
-        print(f"  #{post['id']}: {post['content'][:40]}... "
-              f"({post.get('scheduled_for', 'N/A')})")
-    
-    # Пример 6: Информация о запланированных заданиях
-    print("\n[7] Запланированные задания:")
-    jobs = bot.get_jobs_info()
-    for job in jobs:
-        print(f"  {job['id']}: {job['next_run_time']}")
-    
-    print("\n" + "=" * 60)
-    print("Бот готов к работе!")
-    print("Хранилище постов: posts.json")
-    print("=" * 60)
-    
-    # Бот будет работать в фоне
-    # Для остановки: Ctrl+C или bot.shutdown()
     try:
-        import time
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n\nОстановка бота...")
-        bot.shutdown()
-        print("Бот остановлен")
+        # Обработка относительного времени
+        if input_time_str.endswith('h'):
+            hours = int(input_time_str[:-1])
+            return now_nsk + timedelta(hours=hours)
+            
+        elif input_time_str.endswith('m'):
+            minutes = int(input_time_str[:-1])
+            return now_nsk + timedelta(minutes=minutes)
+            
+        elif input_time_str.endswith('d'):
+            days = int(input_time_str[:-1])
+            return now_nsk + timedelta(days=days)
+            
+        elif input_time_str.startswith('tomorrow'):
+            time_part = input_time_str.replace('tomorrow', '').strip()
+            if not time_part:
+                return None
+            time_obj = datetime.strptime(time_part, '%H:%M').time()
+            target_date = now_nsk.date() + timedelta(days=1)
+            return Config.NSK_TIMEZONE.localize(
+                datetime.combine(target_date, time_obj)
+            )
+            
+        else:
+            # Попытка распарсить как полную дату
+            try:
+                target_time = datetime.strptime(input_time_str, '%Y-%m-%d %H:%M')
+                return Config.NSK_TIMEZONE.localize(target_time)
+            except ValueError:
+                # Попытка распарсить как время сегодня
+                time_obj = datetime.strptime(input_time_str, '%H:%M').time()
+                target_time = Config.NSK_TIMEZONE.localize(
+                    datetime.combine(now_nsk.date(), time_obj)
+                )
+                # Если время уже прошло сегодня, переносим на завтра
+                if target_time < now_nsk:
+                    target_time += timedelta(days=1)
+                return target_time
+                
+    except (ValueError, TypeError) as e:
+        logging.error(f"Ошибка парсинга времени '{input_time_str}': {e}")
+        return None
+
+def format_time_remaining(target_time: datetime) -> str:
+    """Форматирует оставшееся время до публикации"""
+    now = datetime.now(Config.NSK_TIMEZONE)
+    diff = target_time - now
+    
+    if diff.total_seconds() < 0:
+        return "время прошло"
+    
+    days = diff.days
+    hours = diff.seconds // 3600
+    minutes = (diff.seconds % 3600) // 60
+    
+    parts = []
+    if days > 0:
+        parts.append(f"{days} дн.")
+    if hours > 0:
+        parts.append(f"{hours} ч.")
+    if minutes > 0:
+        parts.append(f"{minutes} мин.")
+    
+    return " ".join(parts) if parts else "менее минуты"
+
+# ==================== ОБРАБОТЧИКИ КОМАНД ====================
+
+@dp.message_handler(commands=['start'])
+async def cmd_start(message: types.Message):
+    """Обработчик команды /start"""
+    welcome_text = """
+🤖 <b>Бот для автопостинга</b>
+
+Я помогу вам планировать посты с учетом новосибирского времени (UTC+7).
+
+<b>Доступные команды:</b>
+/post - создать новый пост
+/list - показать запланированные посты
+/cancel - отменить текущее действие
+/help - показать эту справку
+
+<b>Форматы времени:</b>
+• 14:30 - сегодня в 14:30 (или завтра)
+• 2024-01-15 14:30 - конкретная дата
+• tomorrow 14:30 - завтра в 14:30
+• 1h - через 1 час
+• 30m - через 30 минут
+• 1d - через 1 день
+
+После публикации можно настроить автоматическое удаление поста.
+    """
+    await message.reply(welcome_text, parse_mode=ParseMode.HTML)
+
+@dp.message_handler(commands=['help'])
+async def cmd_help(message: types.Message):
+    """Обработчик команды /help"""
+    await cmd_start(message)
+
+@dp.message_handler(commands=['post'])
+async def cmd_post(message: types.Message):
+    """Обработчик команды /post - начало создания поста"""
+    await message.reply(
+        "📝 Отправьте текст поста для публикации.\n"
+        "Можно использовать HTML-разметку: <b>жирный</b>, <i>курсив</i>, <code>код</code>"
+    )
+    await PostStates.waiting_for_content.set()
+
+@dp.message_handler(state=PostStates.waiting_for_content)
+async def process_content(message: types.Message, state: FSMContext):
+    """Обработка ввода текста поста"""
+    await state.update_data(content=message.html_text)
+    await message.reply(
+        "⏰ Укажите время публикации.\n"
+        "Например: 14:30, tomorrow 10:00, 2024-01-15 15:30, 2h, 45m"
+    )
+    await PostStates.waiting_for_time.set()
+
+@dp.message_handler(state=PostStates.waiting_for_time)
+async def process_time(message: types.Message, state: FSMContext):
+    """Обработка ввода времени публикации"""
+    publish_time = parse_time(message.text)
+    
+    if not publish_time:
+        await message.reply(
+            "❌ Неверный формат времени.\n"
+            "Используйте: 14:30, tomorrow 10:00, 2024-01-15 15:30, 2h, 45m"
+        )
+        return
+    
+    now_nsk = datetime.now(Config.NSK_TIMEZONE)
+    if publish_time <= now_nsk:
+        await message.reply("❌ Время публикации должно быть в будущем!")
+        return
+    
+    await state.update_data(publish_time=publish_time.isoformat())
+    
+    # Запрашиваем время до удаления
+    await message.reply(
+        "🗑 Через сколько минут удалить пост?\n"
+        "Отправьте:\n"
+        "• число минут (например: 60)\n"
+        "• 0 - если не нужно удалять\n"
+        "• пропустите этот шаг (отправьте '-')"
+    )
+    await PostStates.waiting_for_delete.set()
+
+@dp.message_handler(state=PostStates.waiting_for_delete)
+async def process_delete(message: types.Message, state: FSMContext):
+    """Обработка ввода времени до удаления"""
+    delete_minutes = None
+    
+    if message.text and message.text != '-':
+        try:
+            delete_minutes = int(message.text)
+            if delete_minutes < 0:
+                raise ValueError
+        except ValueError:
+            await message.reply("❌ Введите корректное число минут или '-'")
+            return
+    
+    data = await state.get_data()
+    
+    # Создаем пост
+    post_id = f"post_{datetime.now().timestamp()}"
+    new_post = ScheduledPost(
+        id=post_id,
+        chat_id=message.chat.id,
+        content=data['content'],
+        publish_time=data['publish_time'],
+        delete_after_minutes=delete_minutes
+    )
+    
+    # Сохраняем в хранилище
+    post_storage.add(new_post)
+    
+    # Планируем публикацию
+    asyncio.create_task(schedule_post_task(new_post))
+    
+    # Формируем ответ
+    publish_time = new_post.publish_time_dt
+    time_remaining = format_time_remaining(publish_time)
+    
+    response = (
+        f"✅ <b>Пост запланирован!</b>\n\n"
+        f"🆔 ID: <code>{post_id}</code>\n"
+        f"📅 Публикация: {publish_time.strftime('%d.%m.%Y %H:%M')} NSK\n"
+        f"⏳ Осталось: {time_remaining}\n"
+    )
+    
+    if delete_minutes:
+        delete_time = publish_time + timedelta(minutes=delete_minutes)
+        response += f"🗑 Удаление: через {delete_minutes} мин. ({delete_time.strftime('%H:%M')} NSK)"
+    else:
+        response += "🗑 Удаление: не требуется"
+    
+    await message.reply(response, parse_mode=ParseMode.HTML)
+    await state.finish()
+
+@dp.message_handler(commands=['list'])
+async def cmd_list(message: types.Message):
+    """Обработчик команды /list - список запланированных постов"""
+    posts = post_storage.get_all()
+    
+    if not posts:
+        await message.reply("📭 Нет запланированных постов")
+        return
+    
+    now_nsk = datetime.now(Config.NSK_TIMEZONE)
+    response = "<b>📋 Запланированные посты:</b>\n\n"
+    
+    for post_id, post in posts.items():
+        if post.status != PostStatus.SCHEDULED.value:
+            continue
+            
+        publish_time = post.publish_time_dt
+        if publish_time < now_nsk:
+            continue
+            
+        time_remaining = format_time_remaining(publish_time)
+        
+        response += (
+            f"🆔 <code>{post_id}</code>\n"
+            f"📅 {publish_time.strftime('%d.%m.%Y %H:%M')}\n"
+            f"⏳ {time_remaining}\n"
+            f"📝 {post.content[:50]}{'...' if len(post.content) > 50 else ''}\n\n"
+        )
+    
+    await message.reply(response, parse_mode=ParseMode.HTML)
+
+@dp.message_handler(commands=['cancel'], state='*')
+async def cmd_cancel(message: types.Message, state: FSMContext):
+    """Обработчик команды /cancel - отмена текущего действия"""
+    current_state = await state.get_state()
+    if current_state is None:
+        await message.reply("🤷 Нет активного действия")
+        return
+    
+    await state.finish()
+    await message.reply("✅ Действие отменено")
+
+# ==================== ЗАДАЧИ ПЛАНИРОВЩИКА ====================
+
+async def publish_post(post: ScheduledPost):
+    """Публикация поста"""
+    try:
+        message = await bot.send_message(
+            post.chat_id,
+            post.content,
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Обновляем статус поста
+        post_storage.update(
+            post.id,
+            message_id=message.message_id,
+            status=PostStatus.PUBLISHED.value
+        )
+        
+        logging.info(f"✅ Пост {post.id} опубликован")
+        
+        # Если нужно удаление через время
+        if post.delete_after_minutes:
+            delete_time = post.publish_time_dt + timedelta(minutes=post.delete_after_minutes)
+            delay = (delete_time - datetime.now(Config.NSK_TIMEZONE)).total_seconds()
+            
+            if delay > 0:
+                await asyncio.sleep(delay)
+                await delete_post(post.id)
+                
+    except Exception as e:
+        logging.error(f"❌ Ошибка публикации поста {post.id}: {e}")
+        post_storage.update(post.id, status=PostStatus.FAILED.value)
+
+async def delete_post(post_id: str):
+    """Удаление поста"""
+    try:
+        post = post_storage.get(post_id)
+        if not post or not post.message_id:
+            return
+            
+        await bot.delete_message(post.chat_id, post.message_id)
+        post_storage.update(post_id, status=PostStatus.DELETED.value)
+        logging.info(f"🗑 Пост {post_id} удален")
+        
+    except Exception as e:
+        logging.error(f"❌ Ошибка удаления поста {post_id}: {e}")
+
+async def schedule_post_task(post: ScheduledPost):
+    """Планирование поста"""
+    now_nsk = datetime.now(Config.NSK_TIMEZONE)
+    publish_time = post.publish_time_dt
+    
+    # Вычисляем задержку до публикации
+    delay = (publish_time - now_nsk).total_seconds()
+    
+    if delay > 0:
+        await asyncio.sleep(delay)
+        await publish_post(post)
+
+async def check_scheduled_posts():
+    """Проверка и запуск запланированных постов при старте"""
+    now_nsk = datetime.now(Config.NSK_TIMEZONE)
+    
+    for post in post_storage.get_all().values():
+        if post.status != PostStatus.SCHEDULED.value:
+            continue
+            
+        publish_time = post.publish_time_dt
+        
+        # Если время публикации прошло
+        if publish_time < now_nsk:
+            # Проверяем, нужно ли удалить пост
+            if post.delete_time and post.delete_time > now_nsk:
+                # Время удаления еще не наступило, публикуем сейчас
+                await publish_post(post)
+            else:
+                # Время удаления тоже прошло, помечаем как failed
+                post_storage.update(post.id, status=PostStatus.FAILED.value)
+        else:
+            # Время еще не наступило, планируем
+            asyncio.create_task(schedule_post_task(post))
+
+# ==================== ЗАПУСК БОТА ====================
+
+async def on_startup(dp):
+    """Действия при запуске бота"""
+    logging.info("🚀 Бот запускается...")
+    await check_scheduled_posts()
+    logging.info("✅ Бот готов к работе!")
+
+async def on_shutdown(dp):
+    """Действия при остановке бота"""
+    logging.info("🛑 Бот останавливается...")
+    await bot.close()
+    logging.info("👋 До свидания!")
+
+if __name__ == '__main__':
+    # Запуск бота
+    executor.start_polling(
+        dp,
+        skip_updates=True,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown
+    )

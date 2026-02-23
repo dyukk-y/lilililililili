@@ -1,22 +1,3 @@
-# Core dependencies
-pytz==2024.1
-APScheduler==3.10.4
-
-# Optional: Telegram integration
-# python-telegram-bot>=20.0
-
-# Optional: VK integration
-# vk-api>=11.9.9
-
-# Optional: Instagram integration
-# instagrapi>=2.0.0
-
-# Optional: Twitter/X integration
-# tweepy>=4.14.0
-
-# Optional: Discord integration
-# discord.py>=2.3.0
-
-# Optional: Database support
-# sqlalchemy>=2.0.0
-# psycopg2-binary>=2.9.0
+aiogram==2.25.1
+pytz==2023.3
+python-dotenv==1.0.0
