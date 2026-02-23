@@ -438,6 +438,43 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 dp.middleware.setup(LoggingMiddleware())
 
+
+class AdminOnlyMiddleware(BaseMiddleware):
+    """Middleware, разрешающее взаимодействие только администратору (по ID)."""
+
+    async def on_pre_process_update(self, update, data):
+        # Извлекаем ID пользователя из разных типов обновлений
+        user_id = None
+
+        if hasattr(update, 'message') and update.message:
+            user = update.message.from_user
+        elif hasattr(update, 'callback_query') and update.callback_query:
+            user = update.callback_query.from_user
+        else:
+            user = None
+
+        if user:
+            user_id = getattr(user, 'id', None)
+
+        # Разрешаем, если это канал (chat) или админ
+        if user_id is None:
+            return
+
+        if int(user_id) != int(Config.ADMIN_ID):
+            # Отменяем обработку и, при наличии, отправляем уведомление
+            try:
+                if hasattr(update, 'message') and update.message:
+                    await update.message.reply("❌ Доступ запрещен.")
+                elif hasattr(update, 'callback_query') and update.callback_query:
+                    await update.callback_query.answer("❌ Доступ запрещен.", show_alert=True)
+            except Exception:
+                pass
+
+            raise CancelHandler()
+
+# Регистрируем middleware администратора после логирования
+dp.middleware.setup(AdminOnlyMiddleware())
+
 # Настройка логирования
 logging.basicConfig(
     level=Config.LOG_LEVEL,
