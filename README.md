@@ -125,7 +125,15 @@ Bot includes ready-to-use integrations for:
 
 See `platform_integrations.py` for examples.
 
-## 📖 Examples
+## 📖 Documentation
+
+- **[INSTALLING.md](INSTALLING.md)** - Complete installation guide for all platforms
+- **[README_RU.md](README_RU.md)** - Russian documentation
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - How to contribute
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Solutions for common issues
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history
+
+## 📖 Quick Examples
 
 ### Interactive Quick Start
 ```bash
@@ -140,6 +148,35 @@ python examples.py
 ### Run Basic Bot
 ```bash
 python bot.py
+```
+
+## 🛠️ Development
+
+### Setup Development Environment
+
+```bash
+# Install dev dependencies
+pip install -r requirements-dev.txt
+
+# Run tests
+pytest tests/ -v
+
+# Format code
+black bot.py
+
+# Check code style
+flake8 bot.py
+```
+
+### Using Makefile (Linux/macOS)
+
+```bash
+make help              # Show all commands
+make install-dev      # Install dev tools
+make test             # Run tests
+make lint             # Check code style
+make format           # Format code
+make docker-build     # Build Docker image
 ```
 
 ## 🛠️ Configuration

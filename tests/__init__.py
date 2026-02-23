@@ -1,0 +1,3 @@
+"""
+Tests for AutoPost Bot
+"""

@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  autopost-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: autopost-bot
+    
+    # Environment variables from .env file
+    env_file:
+      - .env
+    
+    # Environment variables (override .env if needed)
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BOT_STORAGE_FILE=/app/data/posts.json
+    
+    # Volume for persistent data
+    volumes:
+      - ./data:/app/data
+      - ./posts.json:/app/data/posts.json
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "from bot import AutoPostBot; print('healthy')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # Optional: PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: autopost-db
+    
+    environment:
+      POSTGRES_DB: autopost_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      POSTGRES_INITDB_ARGS: "-c timezone=UTC"
+    
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    
+    restart: unless-stopped
+    
+    # Only start if you're using PostgreSQL
+    profiles:
+      - database
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local

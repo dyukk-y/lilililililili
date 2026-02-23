@@ -1,0 +1,33 @@
+# Development dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Core dependencies
+pytz==2024.1
+APScheduler==3.10.4
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-asyncio==0.21.1
+
+# Code quality
+flake8==6.1.0
+black==23.12.0
+mypy==1.7.1
+pylint==3.0.3
+
+# Documentation
+sphinx==7.2.6
+sphinx-rtd-theme==2.0.0
+
+# Version management
+bumpversion==0.6.0
+
+# Packaging & Distribution
+setuptools==69.0.3
+wheel==0.42.0
+twine==4.0.2
+
+# Development tools
+ipython==8.18.1
+ipdb==0.13.13
