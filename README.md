@@ -27,6 +27,8 @@ cd lilililililili
 pip install -r requirements.txt
 ```
 
+**👉 New to the project?** See [INSTALL_QUICK.md](INSTALL_QUICK.md) for 2-minute setup
+
 ### Basic Usage
 
 ```python
