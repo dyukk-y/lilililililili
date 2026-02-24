@@ -339,6 +339,19 @@ class Database:
             logger.error(f"❌ Ошибка удаления VK группы: {e}")
             return False
     
+    async def update_vk_group(self, group_id: int, data: dict) -> bool:
+        """Обновить VK группу"""
+        try:
+            async with self.get_connection() as conn:
+                fields = ", ".join([f"{k} = ?" for k in data.keys()])
+                values = list(data.values()) + [group_id]
+                await conn.execute(f"UPDATE vk_groups SET {fields} WHERE id = ?", values)
+                await conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка обновления VK группы: {e}")
+            return False
+    
     # === Telegram источники ===
     
     async def add_telegram_source(self, source_data: Dict) -> int:
