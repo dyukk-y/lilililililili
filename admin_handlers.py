@@ -355,7 +355,7 @@ class AdminHandlers:
             parse_mode='Markdown'
         )
     
-    async def tg_login_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def tg_auth_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Начало авторизации Telegram"""
         query = update.callback_query
         await query.answer()
@@ -1118,6 +1118,22 @@ class AdminHandlers:
         return ConversationHandler.END
     
     # === СТАТИСТИКА ===
+    
+    async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда /stats"""
+        if not await self.check_access(update):
+            return
+        
+        text = (
+            "📊 **Статистика**\n\n"
+            "Выберите период для просмотра:"
+        )
+        
+        await update.message.reply_text(
+            text,
+            reply_markup=self.keyboards.stats_menu(),
+            parse_mode='Markdown'
+        )
     
     async def stats_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Меню статистики"""
