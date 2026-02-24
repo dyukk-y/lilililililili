@@ -149,6 +149,41 @@ class MaslyaninoBot:
             per_message=False
         )
         self.application.add_handler(tg_auth_conv)
+        
+        # Добавление VK группы
+        from admin_handlers import (ADD_VK_NAME, ADD_VK_ID, ADD_VK_TOPIC, ADD_VK_ALL_POSTS,
+                                    ADD_VK_CLASSIFIER, ADD_VK_KEYWORDS, ADD_VK_EXCLUDE, ADD_VK_DATE_PRICE,
+                                    ADD_TG_NAME, ADD_TG_LINK, ADD_TG_TOPIC_ID)
+        
+        vk_add_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(handlers.vk_add_start, pattern="^vk_add$")],
+            states={
+                ADD_VK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.vk_add_name)],
+                ADD_VK_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.vk_add_id)],
+                ADD_VK_TOPIC: [CallbackQueryHandler(handlers.vk_add_topic_callback, pattern="^topic_select_")],
+                ADD_VK_ALL_POSTS: [CallbackQueryHandler(handlers.vk_add_all_posts_callback, pattern="^vk_all_")],
+                ADD_VK_CLASSIFIER: [CallbackQueryHandler(handlers.vk_add_classifier_callback, pattern="^classifier_")],
+                ADD_VK_KEYWORDS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.vk_add_keywords)],
+                ADD_VK_EXCLUDE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.vk_add_exclude)],
+                ADD_VK_DATE_PRICE: [CallbackQueryHandler(handlers.vk_add_date_price_callback, pattern="^vk_date_")],
+            },
+            fallbacks=[CommandHandler("cancel", handlers.cancel)],
+            per_message=False
+        )
+        self.application.add_handler(vk_add_conv)
+        
+        # Добавление Telegram источника
+        tg_add_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(handlers.tg_add_start, pattern="^tg_add$")],
+            states={
+                ADD_TG_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.tg_add_name)],
+                ADD_TG_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.tg_add_id)],
+                ADD_TG_TOPIC_ID: [CallbackQueryHandler(handlers.tg_add_topic_callback, pattern="^topic_select_")],
+            },
+            fallbacks=[CommandHandler("cancel", handlers.cancel)],
+            per_message=False
+        )
+        self.application.add_handler(tg_add_conv)
     
     async def post_init(self, application):
         """После инициализации"""

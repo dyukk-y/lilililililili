@@ -1288,3 +1288,149 @@ class AdminHandlers:
             reply_markup=self.keyboards.back_button("back_main"),
             parse_mode='Markdown'
         )
+    
+    # === ДОБАВЛЕНИЕ TELEGRAM ИСТОЧНИКОВ ===
+    
+    async def tg_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Меню Telegram источников"""
+        query = update.callback_query
+        await query.answer()
+        
+        sources = await self.db.get_telegram_sources(enabled_only=False)
+        active_count = sum(1 for s in sources if s['enabled'])
+        
+        text = (
+            f"💬 **Telegram Источники**\n\n"
+            f"Всего источников: {len(sources)}\n"
+            f"Активных: {active_count}\n\n"
+            f"Здесь можно добавлять чаты, каналы и поддерживаемые группы для мониторинга"
+        )
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=self.keyboards.tg_menu(),
+            parse_mode='Markdown'
+        )
+    
+    async def tg_add_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Начало добавления Telegram источника"""
+        query = update.callback_query
+        await query.answer()
+        
+        await query.edit_message_text(
+            "➕ **Добавление Telegram источника**\n\n"
+            "Шаг 1/3: Введите **имя источника**\n"
+            "Например: `Мой чат`, `Важный канал`\n\n"
+            "Или отправьте /cancel для отмены",
+            reply_markup=self.keyboards.cancel_button(),
+            parse_mode='Markdown'
+        )
+        
+        return ADD_TG_NAME
+    
+    async def tg_add_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Получение названия источника"""
+        name = update.message.text.strip()
+        context.user_data['tg_name'] = name
+        
+        await update.message.reply_text(
+            f"✅ Название: **{name}**\n\n"
+            "Шаг 2/3: Введите **ID или имя чата/канала**\n"
+            "Варианты:\n"
+            "• Имя канала: `@mychannel`\n"
+            "• ID чата: `-1001234567890`\n"
+            "• Имя пользователя: `@username`\n\n"
+            "ID можно узнать через боты в Telegram",
+            parse_mode='Markdown',
+            reply_markup=self.keyboards.cancel_button()
+        )
+        
+        return ADD_TG_LINK
+    
+    async def tg_add_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Получение ID источника"""
+        chat_id = update.message.text.strip()
+        context.user_data['tg_chat_id'] = chat_id
+        
+        # Получаем список тем для выбора
+        topics = await self.db.get_topics()
+        
+        if not topics:
+            await update.message.reply_text(
+                "❌ Сначала добавьте темы через меню Темы!",
+                reply_markup=self.keyboards.back_button("back_tg")
+            )
+            return ConversationHandler.END
+        
+        await update.message.reply_text(
+            f"✅ ID: `{chat_id}`\n\n"
+            "Шаг 3/3: Выберите **целевую тему**\n"
+            "Сообщения из этого источника будут публиковаться в эту тему",
+            reply_markup=self.keyboards.topics_selection_menu(topics),
+            parse_mode='Markdown'
+        )
+        
+        return ADD_TG_TOPIC_ID
+    
+    async def tg_add_topic_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Завершение добавления Telegram источника"""
+        query = update.callback_query
+        await query.answer()
+        
+        topic_id = query.data.replace('topic_select_', '')
+        topics = await self.db.get_topics()
+        topic = topics.get(topic_id, {})
+        
+        # Собираем данные
+        source_data = {
+            'name': context.user_data.get('tg_name'),
+            'chat_id': context.user_data.get('tg_chat_id'),
+            'target_topic': topic_id,
+            'enabled': True
+        }
+        
+        # Сохраняем в БД
+        try:
+            # Пытаемся преобразовать в число для проверки
+            try:
+                int(source_data['chat_id'])
+            except ValueError:
+                # Если это не число, оставляем как есть (username)
+                pass
+            
+            source_id = await self.db.add_telegram_source(source_data)
+            
+            if source_id:
+                text = (
+                    f"✅ **Telegram источник успешно добавлен!**\n\n"
+                    f"📝 **Название:** {source_data['name']}\n"
+                    f"🆔 **ID:** `{source_data['chat_id']}`\n"
+                    f"📂 **Тема:** {topic.get('emoji', '')} {topic.get('name', topic_id)}\n"
+                    f"✅ **Статус:** Активен\n\n"
+                    f"Бот будет отслеживать сообщения из этого источника."
+                )
+            else:
+                text = "❌ Ошибка при добавлении источника."
+        except Exception as e:
+            logger.error(f"❌ Ошибка добавления Telegram источника: {e}")
+            text = f"❌ Ошибка: {str(e)}"
+        
+        # Очищаем данные
+        context.user_data.clear()
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=self.keyboards.back_button("back_tg"),
+            parse_mode='Markdown'
+        )
+        
+        return ConversationHandler.END
+    
+    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Отмена операции"""
+        await update.message.reply_text(
+            "❌ Операция отменена",
+            reply_markup=self.keyboards.back_button("back_main")
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
