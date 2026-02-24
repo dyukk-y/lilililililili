@@ -100,6 +100,21 @@ class AdminHandlers:
         
         await update.message.reply_text(text, parse_mode='Markdown')
     
+    async def account_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда /account - Управление аккаунтами"""
+        if not await self.check_access(update):
+            return
+        
+        vk_status, tg_status = await self.account_manager.get_session_status()
+        
+        await update.message.reply_text(
+            "🔐 **Управление аккаунтами**\n\n"
+            "Здесь вы можете войти в VK и Telegram аккаунты.\n"
+            "Эти аккаунты будут использоваться для парсинга.",
+            reply_markup=self.keyboards.accounts_menu(vk_status, tg_status),
+            parse_mode='Markdown'
+        )
+    
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /status"""
         if not await self.check_access(update):
