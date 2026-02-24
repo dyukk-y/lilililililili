@@ -2,6 +2,7 @@
 Все клавиатуры бота (инлайн кнопки)
 """
 
+from typing import Dict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 class Keyboards:
