@@ -1216,6 +1216,277 @@ class AdminHandlers:
     
     # === ОБЩИЕ ОБРАБОТЧИКИ ===
     
+    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Общий обработчик для всех callback query"""
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+        
+        # Меню
+        if data == "menu_vk":
+            await self.vk_menu(update, context)
+        elif data == "menu_tg":
+            await self.tg_menu(update, context)
+        elif data == "menu_topics":
+            await self.topics_menu(update, context)
+        elif data == "menu_adwords":
+            await self.adwords_menu(update, context)
+        elif data == "menu_accounts":
+            await self.account_menu(update, context)
+        elif data == "menu_stats":
+            await self.stats(update, context)
+        elif data == "menu_settings":
+            await self.settings(update, context)
+        elif data == "menu_help":
+            await self.help(update, context)
+        
+        # Аккаунты
+        elif data == "account_vk":
+            await self.vk_account_handler(update, context)
+        elif data == "account_tg":
+            await self.tg_account_handler(update, context)
+        elif data == "account_status":
+            await self.status(update, context)
+        
+        # VK
+        elif data == "vk_token_change":
+            await self.vk_token_enter(update, context)
+        elif data == "vk_token_enter":
+            await self.vk_token_enter(update, context)
+        elif data == "vk_logout":
+            await self.vk_logout(update, context)
+        elif data == "vk_refresh":
+            await self.vk_menu(update, context)
+        
+        # Telegram
+        elif data == "tg_logout":
+            await self.tg_logout(update, context)
+        elif data == "tg_check":
+            await self.tg_check_access(update, context)
+        
+        # VK Groups (group_toggle и group_delete)
+        elif data.startswith("group_toggle_"):
+            await self.group_toggle(update, context)
+        elif data.startswith("group_delete_"):
+            await self.group_delete(update, context)
+        
+        # Темы
+        elif data == "topic_list":
+            await self.topic_list(update, context)
+        elif data == "topic_add":
+            await self.topic_add(update, context)
+        elif data == "topic_edit":
+            await self.topic_edit(update, context)
+        
+        # Стоп-слова
+        elif data == "adword_list":
+            await self.adword_list(update, context)
+        elif data == "adword_add":
+            await self.adword_add(update, context)
+        elif data == "adword_remove":
+            await self.adword_remove(update, context)
+        
+        # Статистика
+        elif data == "stats_today":
+            await self.stats_show(update, context, "today")
+        elif data == "stats_week":
+            await self.stats_show(update, context, "week")
+        elif data == "stats_month":
+            await self.stats_show(update, context, "month")
+        elif data == "stats_all":
+            await self.stats_show(update, context, "all")
+        elif data == "back_stats":
+            await self.stats(update, context)
+        
+        # Кнопки назад
+        elif data.startswith("back_"):
+            await self.back_handler(update, context)
+        
+        # VK список
+        elif data == "vk_list":
+            await self.vk_list(update, context)
+        
+        # Telegram список
+        elif data == "tg_list":
+            await self.tg_list(update, context)
+        
+        # Неизвестный callback
+        else:
+            logger.warning(f"⚠️ Неизвестный callback: {data}")
+            # Просто ничего не делаем, пользователь получит ответ что кнопка не распознана
+            await query.answer("❌ Неизвестная кнопка", show_alert=False)
+
+    async def settings(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Меню настроек"""
+        if update.callback_query:
+            query = update.callback_query
+            await query.answer()
+            method = "edit_message_text"
+        else:
+            method = "reply_text"
+        
+        text = (
+            "⚙️ **Настройки**\n\n"
+            "Опции настроек:\n"
+            "• Интервалы проверки\n"
+            "• Формат сообщений\n"
+            "• Дополнительные фильтры\n\n"
+            "⚙️ Функция в разработке"
+        )
+        
+        if method == "edit_message_text":
+            await query.edit_message_text(
+                text,
+                reply_markup=self.keyboards.back_button("back_main"),
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=self.keyboards.back_button("back_main"),
+                parse_mode='Markdown'
+            )
+
+    async def tg_check_access(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Проверить доступ к Telegram аккаунту"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            tg_client = await self.account_manager.get_tg_client()
+            if tg_client and tg_client.is_connected():
+                text = "✅ **Доступ к Telegram есть**\n\nАккаунт активен и готов к использованию"
+            else:
+                text = "❌ **Доступ к Telegram отсутствует**\n\nПожалуйста, авторизуйтесь заново"
+        except Exception as e:
+            text = f"❌ **Ошибка проверки доступа**\n\n{str(e)}"
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=self.keyboards.back_button("back_tg"),
+            parse_mode='Markdown'
+        )
+
+    async def tg_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать список Telegram источников"""
+        query = update.callback_query
+        await query.answer()
+        
+        sources = await self.db.get_telegram_sources(enabled_only=False)
+        topics = await self.db.get_topics()
+        
+        if not sources:
+            text = "📋 **Telegram источники**\n\nСписок пуст. Добавьте первый источник через ➕ Добавить источник"
+            await query.edit_message_text(
+                text,
+                reply_markup=self.keyboards.back_button("back_tg"),
+                parse_mode='Markdown'
+            )
+            return
+        
+        text = "📋 **Telegram источники**\n\n"
+        
+        for i, source in enumerate(sources, 1):
+            status = "✅" if source['enabled'] else "❌"
+            topic_name = topics.get(source['target_topic'], {}).get('name', source['target_topic'])
+            
+            text += f"{status} **{i}. {source['name']}**\n"
+            text += f"   ID: `{source['link']}`\n"
+            text += f"   Тема: {topic_name}\n\n"
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=self.keyboards.back_button("back_tg"),
+            parse_mode='Markdown'
+        )
+
+    async def group_toggle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Переключить статус VK группы"""
+        query = update.callback_query
+        await query.answer()
+        
+        # Извлекаем group_id и status_action из callback_data вида group_toggle_{group_id}_{action}
+        parts = query.data.split("_")
+        if len(parts) >= 4:
+            group_id = parts[2]
+            status_action = parts[3]  # "enable" или "disable"
+            
+            try:
+                # Обновляем статус группы
+                enabled = status_action == "enable"
+                await self.db.update_vk_group(group_id, enabled=enabled)
+                
+                text = f"✅ Статус группы обновлен"
+                await query.answer(text, show_alert=True)
+                
+                # Возвращаемся к списку групп
+                await self.vk_list(update, context)
+            except Exception as e:
+                logger.error(f"❌ Ошибка при обновлении статуса группы: {e}")
+                await query.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+        else:
+            await query.answer("❌ Некорректные данные", show_alert=True)
+
+    async def group_delete(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Удалить VK группу"""
+        query = update.callback_query
+        await query.answer()
+        
+        # Извлекаем group_id из callback_data вида group_delete_{group_id}
+        parts = query.data.split("_")
+        if len(parts) >= 3:
+            group_id = parts[2]
+            
+            try:
+                # Удаляем группу
+                await self.db.delete_vk_group(group_id)
+                
+                await query.answer("✅ Группа удалена", show_alert=True)
+                
+                # Возвращаемся к списку групп
+                await self.vk_list(update, context)
+            except Exception as e:
+                logger.error(f"❌ Ошибка при удалении группы: {e}")
+                await query.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+        else:
+            await query.answer("❌ Некорректные данные", show_alert=True)
+
+    async def topic_edit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Редактировать тему"""
+        query = update.callback_query
+        await query.answer()
+        
+        topics = await self.db.get_topics()
+        
+        if not topics:
+            text = "📋 **Темы**\n\nСписок пуст. Добавьте первую тему через ➕ Добавить тему"
+            await query.edit_message_text(
+                text,
+                reply_markup=self.keyboards.back_button("back_topics"),
+                parse_mode='Markdown'
+            )
+            return
+        
+        text = "✏️ **Редактировать тему**\n\n"
+        text += "Выберите тему для редактирования:\n\n"
+        
+        for topic_id, topic_data in topics.items():
+            text += f"• {topic_data.get('emoji', '')} {topic_data.get('name', topic_id)}\n"
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=self.keyboards.back_button("back_topics"),
+            parse_mode='Markdown'
+        )
+
+    async def adword_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Добавить стоп-слово"""
+        await self.adword_add_start(update, context)
+
+    async def adword_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Удалить стоп-слово"""
+        await self.adword_remove_start(update, context)
+
     async def back_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка кнопки назад"""
         query = update.callback_query
@@ -1262,48 +1533,6 @@ class AdminHandlers:
         return ConversationHandler.END
     
     # === ЗАГЛУШКИ ДЛЯ НЕ РЕАЛИЗОВАННЫХ ФУНКЦИЙ ===
-    
-    async def tg_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Меню Telegram источников (заглушка)"""
-        query = update.callback_query
-        await query.answer()
-        
-        sources = await self.db.get_telegram_sources(enabled_only=False)
-        enabled = sum(1 for s in sources if s['enabled'])
-        
-        text = (
-            f"💬 **Telegram источники**\n\n"
-            f"Всего источников: {len(sources)}\n"
-            f"Активных: {enabled}\n\n"
-            f"⚙️ Функция в разработке\n"
-            f"Скоро здесь можно будет добавлять чаты для парсинга"
-        )
-        
-        await query.edit_message_text(
-            text,
-            reply_markup=self.keyboards.back_button("back_main"),
-            parse_mode='Markdown'
-        )
-    
-    async def settings_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Меню настроек (заглушка)"""
-        query = update.callback_query
-        await query.answer()
-        
-        text = (
-            "⚙️ **Настройки**\n\n"
-            "Здесь будут настройки бота:\n"
-            "• Интервалы проверки\n"
-            "• Формат сообщений\n"
-            "• Дополнительные фильтры\n\n"
-            "⚙️ Функция в разработке"
-        )
-        
-        await query.edit_message_text(
-            text,
-            reply_markup=self.keyboards.back_button("back_main"),
-            parse_mode='Markdown'
-        )
     
     # === ДОБАВЛЕНИЕ TELEGRAM ИСТОЧНИКОВ ===
     
