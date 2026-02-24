@@ -138,7 +138,8 @@ class MaslyaninoBot:
         tg_auth_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(
                 handlers.tg_auth_start, 
-                pattern="^tg_login$"
+                pattern="^tg_login$",
+                per_message=True
             )],
             states={
                 TG_AUTH_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.tg_auth_phone)],
