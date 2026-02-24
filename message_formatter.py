@@ -2,7 +2,7 @@
 Форматирование сообщений для отправки в Telegram
 """
 
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 class MessageFormatter:
