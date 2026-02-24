@@ -147,6 +147,7 @@ class MaslyaninoBot:
                 TG_AUTH_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.tg_auth_password)],
             },
             fallbacks=[CommandHandler("cancel", handlers.cancel)],
+            per_message=True
         )
         self.application.add_handler(tg_auth_conv)
     
