@@ -2,7 +2,6 @@
 Все клавиатуры бота (инлайн кнопки)
 """
 
-from typing import Dict, Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 class Keyboards:
@@ -151,7 +150,7 @@ class Keyboards:
         return InlineKeyboardMarkup(keyboard)
     
     @staticmethod
-    def topics_selection_menu(topics: dict) -> InlineKeyboardMarkup:
+    def topics_selection_menu(topics):
         """Меню выбора темы"""
         keyboard = []
         for topic_id, topic in topics.items():
