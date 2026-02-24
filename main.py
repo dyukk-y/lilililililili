@@ -179,6 +179,8 @@ class MaslyaninoBot:
             await self.tg_parser.stop()
         
         if self.application:
+            # Правильный порядок завершения
+            await self.application.updater.stop()
             await self.application.stop()
             await self.application.shutdown()
         
@@ -187,8 +189,9 @@ class MaslyaninoBot:
     def signal_handler(self, sig, frame):
         """Обработчик сигналов"""
         logger.info(f"Получен сигнал {sig}")
-        asyncio.create_task(self.shutdown())
-        sys.exit(0)
+        # Завершить event loop корректно
+        if self.application:
+            asyncio.create_task(self.shutdown())
     
     async def run(self):
         """Запуск"""
@@ -216,9 +219,15 @@ class MaslyaninoBot:
             logger.info("✅ Бот готов к работе")
             
             # Держим запущенным
-            while True:
-                await asyncio.sleep(1)
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                logger.info("Получена команда остановки")
+                raise
                 
+        except asyncio.CancelledError:
+            logger.info("Асинхронная операция отменена")
         except Exception as e:
             logger.error(f"❌ Критическая ошибка: {e}")
         finally:
